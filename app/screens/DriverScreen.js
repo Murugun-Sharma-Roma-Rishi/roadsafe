@@ -1,19 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Animated, TextInput, Alert, Modal
+  Animated, TextInput, Alert, Modal,
+  KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
 import { Accelerometer, Gyroscope } from 'expo-sensors';
 import * as Location from 'expo-location';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import config from '../config';
+
+const API_URL = config.API_URL;
 
 const HARSH_BRAKE_THRESHOLD = 1.5;
 const HARSH_ACCEL_THRESHOLD = 1.8;
 const SWERVE_THRESHOLD = 1.6;
-const CRASH_THRESHOLD = 3.5; // Strong impact = crash
+const CRASH_THRESHOLD = 3.5;
+const POTHOLE_THRESHOLD = 2.2; // vertical spike = pothole
 const SPEED_LIMIT = 60;
 const SOS_COUNTDOWN_SECONDS = 10;
+const SOS_COOLDOWN_MS = 30000; // 30s between SOS triggers
 
 export default function DriverScreen() {
   const [score, setScore] = useState(100);
@@ -24,18 +31,18 @@ export default function DriverScreen() {
   const [distance, setDistance] = useState(0);
   const [tripTime, setTripTime] = useState(0);
   const [stats, setStats] = useState({
-    harshBrakes: 0, harshAccels: 0, swerves: 0, speedingEvents: 0
+    harshBrakes: 0, harshAccels: 0, swerves: 0, speedingEvents: 0, potholes: 0
   });
   const [accelData, setAccelData] = useState({ x: 0, y: 0, z: 0 });
-  const [currentLocation, setCurrentLocation] = useState(null);
 
-  // SOS / Emergency contact state
+  // Emergency contact
   const [emergencyContact, setEmergencyContact] = useState('');
   const [showContactSetup, setShowContactSetup] = useState(false);
   const [contactInput, setContactInput] = useState('');
+
+  // SOS
   const [sosActive, setSosActive] = useState(false);
   const [sosCountdown, setSosCountdown] = useState(SOS_COUNTDOWN_SECONDS);
-  const [crashDetected, setCrashDetected] = useState(false);
 
   const scoreAnim = useRef(new Animated.Value(100)).current;
   const accelSub = useRef(null);
@@ -47,7 +54,10 @@ export default function DriverScreen() {
   const lastBrakeTime = useRef(0);
   const lastSwerveTime = useRef(0);
   const lastCrashTime = useRef(0);
+  const lastPotholeTime = useRef(0);
+  const lastSosTriggerTime = useRef(0);
   const locationRef = useRef(null);
+  const sosActiveRef = useRef(false);
 
   useEffect(() => {
     loadEmergencyContact();
@@ -60,16 +70,16 @@ export default function DriverScreen() {
       if (saved) {
         setEmergencyContact(saved);
       } else {
-        // First launch: prompt to set contact
         setShowContactSetup(true);
       }
     } catch (e) {}
   };
 
   const saveEmergencyContact = async () => {
+    Keyboard.dismiss();
     const num = contactInput.replace(/\s/g, '');
-    if (!num) {
-      Alert.alert('Invalid number', 'Please enter a valid phone number.');
+    if (!num || num.length < 7) {
+      Alert.alert('Invalid number', 'Please enter a valid phone number with country code.');
       return;
     }
     try {
@@ -88,7 +98,7 @@ export default function DriverScreen() {
     setIsTracking(true);
     setScore(100);
     setEvents([]);
-    setStats({ harshBrakes: 0, harshAccels: 0, swerves: 0, speedingEvents: 0 });
+    setStats({ harshBrakes: 0, harshAccels: 0, swerves: 0, speedingEvents: 0, potholes: 0 });
     setDistance(0);
     setTripTime(0);
     setMaxSpeed(0);
@@ -101,7 +111,6 @@ export default function DriverScreen() {
         const spd = loc.coords.speed ? Math.max(0, loc.coords.speed * 3.6) : 0;
         setSpeed(Math.round(spd));
         setMaxSpeed(m => Math.max(m, Math.round(spd)));
-        setCurrentLocation(loc.coords);
         locationRef.current = loc.coords;
 
         if (spd > SPEED_LIMIT) {
@@ -123,19 +132,30 @@ export default function DriverScreen() {
       const now = Date.now();
       const magnitude = Math.sqrt(data.x ** 2 + data.y ** 2 + data.z ** 2);
 
-      // Crash detection — very high G force
-      if (magnitude > CRASH_THRESHOLD && (now - lastCrashTime.current) > 5000) {
+      // Crash detection (high overall G)
+      if (magnitude > CRASH_THRESHOLD && (now - lastCrashTime.current) > SOS_COOLDOWN_MS) {
         lastCrashTime.current = now;
         triggerCrashSOS();
         return;
       }
 
+      // Pothole detection: sharp vertical (Z-axis) spike while moving
+      const verticalSpike = Math.abs(data.z - 1); // ~1g is resting gravity
+      if (verticalSpike > POTHOLE_THRESHOLD && (now - lastPotholeTime.current) > 3000) {
+        lastPotholeTime.current = now;
+        setStats(s => ({ ...s, potholes: s.potholes + 1 }));
+        deductScore(2, '🕳️ Pothole detected');
+        autoReportPothole();
+      }
+
+      // Harsh braking
       if (data.y < -HARSH_BRAKE_THRESHOLD && (now - lastBrakeTime.current) > 3000) {
         lastBrakeTime.current = now;
         setStats(s => ({ ...s, harshBrakes: s.harshBrakes + 1 }));
         deductScore(5, '🛑 Harsh braking');
       }
 
+      // Harsh acceleration
       if (data.y > HARSH_ACCEL_THRESHOLD) {
         setStats(s => ({ ...s, harshAccels: s.harshAccels + 1 }));
         deductScore(3, '⚡ Harsh acceleration');
@@ -149,9 +169,29 @@ export default function DriverScreen() {
       if (rotation > SWERVE_THRESHOLD && (now - lastSwerveTime.current) > 3000) {
         lastSwerveTime.current = now;
         setStats(s => ({ ...s, swerves: s.swerves + 1 }));
-        deductScore(4, '⚠️ Sharp swerve/lane change');
+        deductScore(4, '⚠️ Sharp swerve');
       }
     });
+  };
+
+  const autoReportPothole = async () => {
+    const loc = locationRef.current;
+    if (!loc) return;
+    try {
+      await axios.post(`${API_URL}/api/reports`, {
+        type: 'pothole',
+        severity: 'MEDIUM',
+        description: 'Auto-detected by sensor during trip monitoring',
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        timestamp: new Date().toISOString(),
+        anonymous: true,
+        autoDetected: true,
+      });
+      console.log('[AUTO-REPORT] Pothole reported at', loc.latitude, loc.longitude);
+    } catch (e) {
+      console.log('[AUTO-REPORT] Failed, saved offline');
+    }
   };
 
   const stopTracking = () => {
@@ -164,8 +204,12 @@ export default function DriverScreen() {
   };
 
   const triggerCrashSOS = () => {
-    if (sosActive) return;
-    setCrashDetected(true);
+    const now = Date.now();
+    // Cooldown: don't re-trigger if SOS already active or within cooldown
+    if (sosActiveRef.current || (now - lastSosTriggerTime.current) < SOS_COOLDOWN_MS) return;
+
+    lastSosTriggerTime.current = now;
+    sosActiveRef.current = true;
     setSosActive(true);
     setSosCountdown(SOS_COUNTDOWN_SECONDS);
 
@@ -175,14 +219,16 @@ export default function DriverScreen() {
       setSosCountdown(count);
       if (count <= 0) {
         clearInterval(sosTimerRef.current);
+        sosActiveRef.current = false;
         sendSOSWhatsApp();
+        setSosActive(false);
       }
     }, 1000);
   };
 
   const cancelSOS = () => {
+    sosActiveRef.current = false;
     setSosActive(false);
-    setCrashDetected(false);
     setSosCountdown(SOS_COUNTDOWN_SECONDS);
     if (sosTimerRef.current) clearInterval(sosTimerRef.current);
   };
@@ -194,19 +240,15 @@ export default function DriverScreen() {
       : 'Location unavailable';
 
     const message = encodeURIComponent(
-      `🆘 EMERGENCY ALERT from RoadSafe!\n\nA crash has been detected. I may need help.\n\n📍 My location: ${mapsLink}\n\nPlease call me or send help immediately.`
+      `🆘 EMERGENCY ALERT from RoadSafe!\n\nA crash has been detected. I may need help.\n\n📍 My location:\n${mapsLink}\n\nPlease call me or send help immediately.`
     );
 
     const phone = emergencyContact.replace(/\D/g, '');
     const url = `https://wa.me/${phone}?text=${message}`;
 
     Linking.openURL(url).catch(() => {
-      // Fallback to SMS
       Linking.openURL(`sms:${emergencyContact}?body=${message}`);
     });
-
-    setSosActive(false);
-    setCrashDetected(false);
   };
 
   const manualSOS = () => {
@@ -216,10 +258,10 @@ export default function DriverScreen() {
     }
     Alert.alert(
       '🆘 Send SOS?',
-      `This will send an emergency WhatsApp message to ${emergencyContact} with your location.`,
+      `This will send an emergency WhatsApp message to ${emergencyContact} with your current location.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Send SOS', style: 'destructive', onPress: sendSOSWhatsApp },
+        { text: 'Send SOS Now', style: 'destructive', onPress: sendSOSWhatsApp },
       ]
     );
   };
@@ -259,7 +301,6 @@ export default function DriverScreen() {
   };
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
-
   const gradeInfo = getScoreGrade(score);
 
   return (
@@ -267,7 +308,10 @@ export default function DriverScreen() {
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
         {/* Emergency Contact Bar */}
-        <TouchableOpacity style={styles.contactBar} onPress={() => setShowContactSetup(true)}>
+        <TouchableOpacity style={styles.contactBar} onPress={() => {
+          setContactInput(emergencyContact);
+          setShowContactSetup(true);
+        }}>
           <Text style={styles.contactBarText}>
             {emergencyContact
               ? `🆘 SOS Contact: ${emergencyContact}`
@@ -336,6 +380,7 @@ export default function DriverScreen() {
             <BehaviorItem icon="⚡" label="Harsh Accel" count={stats.harshAccels} deduction={3} />
             <BehaviorItem icon="↔️" label="Sharp Swerves" count={stats.swerves} deduction={4} />
             <BehaviorItem icon="🚨" label="Speeding" count={stats.speedingEvents} deduction={3} />
+            <BehaviorItem icon="🕳️" label="Potholes Hit" count={stats.potholes} deduction={2} />
           </View>
         </View>
 
@@ -344,6 +389,7 @@ export default function DriverScreen() {
           <Text style={styles.cardTitle}>📡 Sensor Activity</Text>
           <SensorBar label="Longitudinal (braking/accel)" value={accelData.y} range={[-3, 3]} danger={HARSH_BRAKE_THRESHOLD} />
           <SensorBar label="Lateral (swerving)" value={accelData.x} range={[-3, 3]} danger={1.5} />
+          <SensorBar label="Vertical (potholes)" value={accelData.z} range={[-2, 4]} danger={POTHOLE_THRESHOLD + 1} />
         </View>
 
         {/* Event Log */}
@@ -381,7 +427,7 @@ export default function DriverScreen() {
         <View style={{ height: 30 }} />
       </ScrollView>
 
-      {/* SOS Countdown Overlay */}
+      {/* SOS Countdown Overlay — shown once, has cooldown */}
       {sosActive && (
         <View style={styles.sosOverlay}>
           <Text style={styles.sosOverlayIcon}>🚨</Text>
@@ -392,41 +438,55 @@ export default function DriverScreen() {
           <Text style={styles.sosOverlayCountdown}>{sosCountdown}</Text>
           <Text style={styles.sosOverlayHint}>seconds</Text>
           <TouchableOpacity style={styles.sosCancelBtn} onPress={cancelSOS}>
-            <Text style={styles.sosCancelText}>✕ I'M OK — Cancel SOS</Text>
+            <Text style={styles.sosCancelText}>✕  I'M OK — Cancel SOS</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {/* Emergency Contact Setup Modal */}
-      <Modal visible={showContactSetup} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>🆘 Emergency SOS Contact</Text>
-            <Text style={styles.modalSubtitle}>
-              If a crash is detected, RoadSafe will automatically send a WhatsApp SOS message
-              with your GPS location to this number after a {SOS_COUNTDOWN_SECONDS}-second countdown.
-            </Text>
-            <TextInput
-              style={styles.modalInput}
-              value={contactInput}
-              onChangeText={setContactInput}
-              placeholder="+230 5XXX XXXX (include country code)"
-              placeholderTextColor="#7f8c8d"
-              keyboardType="phone-pad"
-            />
-            <Text style={styles.modalHint}>
-              💡 Include country code, e.g. +23057123456 for Mauritius
-            </Text>
-            <TouchableOpacity style={styles.modalGoBtn} onPress={saveEmergencyContact}>
-              <Text style={styles.modalGoBtnText}>💾 Save Contact</Text>
-            </TouchableOpacity>
-            {emergencyContact ? (
-              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowContactSetup(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-            ) : null}
+      <Modal visible={showContactSetup} transparent animationType="slide" onRequestClose={() => {
+        if (emergencyContact) setShowContactSetup(false);
+      }}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.modalKAV}
+            >
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>🆘 Emergency SOS Contact</Text>
+                <Text style={styles.modalSubtitle}>
+                  If a crash is detected, RoadSafe will automatically send a WhatsApp SOS message
+                  with your GPS location after a {SOS_COUNTDOWN_SECONDS}-second countdown.
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={contactInput}
+                  onChangeText={setContactInput}
+                  placeholder="+230 5XXX XXXX"
+                  placeholderTextColor="#7f8c8d"
+                  keyboardType="phone-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={saveEmergencyContact}
+                />
+                <Text style={styles.modalHint}>
+                  💡 Include country code — e.g. +23057123456 for Mauritius
+                </Text>
+                <TouchableOpacity style={styles.modalGoBtn} onPress={saveEmergencyContact}>
+                  <Text style={styles.modalGoBtnText}>💾 Save Contact</Text>
+                </TouchableOpacity>
+                {emergencyContact ? (
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => {
+                    Keyboard.dismiss();
+                    setShowContactSetup(false);
+                  }}>
+                    <Text style={styles.modalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </View>
   );
@@ -495,9 +555,7 @@ const styles = StyleSheet.create({
   speedWarning: { color: '#E74C3C', fontSize: 14, fontWeight: '600', marginTop: 6 },
 
   buttonRow: { flexDirection: 'row', marginHorizontal: 12, gap: 8, marginBottom: 8 },
-  trackBtn: {
-    flex: 1, padding: 18, borderRadius: 14, alignItems: 'center',
-  },
+  trackBtn: { flex: 1, padding: 18, borderRadius: 14, alignItems: 'center' },
   trackBtnStart: { backgroundColor: '#27AE60' },
   trackBtnStop: { backgroundColor: '#E74C3C' },
   trackBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
@@ -551,7 +609,6 @@ const styles = StyleSheet.create({
   sensorBarFill: { height: '100%', borderRadius: 4, position: 'absolute', left: 0 },
   sensorBarCenter: { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, backgroundColor: '#2d2d4e' },
 
-  // SOS overlay
   sosOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(180,0,0,0.95)',
@@ -568,14 +625,16 @@ const styles = StyleSheet.create({
   },
   sosCancelText: { color: '#C0392B', fontSize: 18, fontWeight: 'bold' },
 
-  // Modal
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
+  modalKAV: { justifyContent: 'flex-end' },
   modalCard: {
-    backgroundColor: '#1a1a2e', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 24, borderTopWidth: 1, borderTopColor: '#E74C3C',
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 24, paddingBottom: 36,
+    borderTopWidth: 1, borderTopColor: '#E74C3C',
   },
   modalTitle: { color: '#ecf0f1', fontSize: 20, fontWeight: 'bold', marginBottom: 8 },
   modalSubtitle: { color: '#7f8c8d', fontSize: 13, marginBottom: 16, lineHeight: 20 },

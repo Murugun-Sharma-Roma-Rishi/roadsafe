@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, TextInput, Modal, Alert
+  ScrollView, ActivityIndicator, TextInput, Modal,
+  Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard
 } from 'react-native';
 import MapView, { Marker, Circle, Polyline, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -12,16 +13,16 @@ import config from '../config';
 const API_URL = config.API_URL;
 
 const DEMO_HAZARDS = [
-  { id: 1, type: 'pothole', latitude: -20.1609, longitude: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
-  { id: 2, type: 'flood', latitude: -20.2368, longitude: 57.5165, severity: 'MEDIUM', area: 'Quatre Bornes', reports: 8 },
-  { id: 3, type: 'accident', latitude: -20.3484, longitude: 57.5012, severity: 'HIGH', area: 'Rose Hill', reports: 5 },
-  { id: 4, type: 'pothole', latitude: -20.0474, longitude: 57.5816, severity: 'LOW', area: 'Triolet', reports: 3 },
-  { id: 5, type: 'roadblock', latitude: -20.4637, longitude: 57.4375, severity: 'MEDIUM', area: 'Mahebourg', reports: 6 },
-  { id: 6, type: 'pothole', latitude: -20.2540, longitude: 57.4760, severity: 'HIGH', area: 'Vacoas', reports: 15 },
-  { id: 7, type: 'flood', latitude: -20.1020, longitude: 57.5560, severity: 'HIGH', area: 'Flacq', reports: 10 },
-  { id: 8, type: 'accident', latitude: -20.1950, longitude: 57.5830, severity: 'MEDIUM', area: 'Curepipe', reports: 7 },
-  { id: 9, type: 'pothole', latitude: -20.3900, longitude: 57.6100, severity: 'LOW', area: 'Souillac', reports: 2 },
-  { id: 10, type: 'signal', latitude: -20.1650, longitude: 57.4900, severity: 'MEDIUM', area: 'Port Louis North', reports: 4 },
+  { id: 'demo-1', type: 'pothole', latitude: -20.1609, longitude: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
+  { id: 'demo-2', type: 'flood', latitude: -20.2368, longitude: 57.5165, severity: 'MEDIUM', area: 'Quatre Bornes', reports: 8 },
+  { id: 'demo-3', type: 'accident', latitude: -20.3484, longitude: 57.5012, severity: 'HIGH', area: 'Rose Hill', reports: 5 },
+  { id: 'demo-4', type: 'pothole', latitude: -20.0474, longitude: 57.5816, severity: 'LOW', area: 'Triolet', reports: 3 },
+  { id: 'demo-5', type: 'roadblock', latitude: -20.4637, longitude: 57.4375, severity: 'MEDIUM', area: 'Mahebourg', reports: 6 },
+  { id: 'demo-6', type: 'pothole', latitude: -20.2540, longitude: 57.4760, severity: 'HIGH', area: 'Vacoas', reports: 15 },
+  { id: 'demo-7', type: 'flood', latitude: -20.1020, longitude: 57.5560, severity: 'HIGH', area: 'Flacq', reports: 10 },
+  { id: 'demo-8', type: 'accident', latitude: -20.1950, longitude: 57.5830, severity: 'MEDIUM', area: 'Curepipe', reports: 7 },
+  { id: 'demo-9', type: 'pothole', latitude: -20.3900, longitude: 57.6100, severity: 'LOW', area: 'Souillac', reports: 2 },
+  { id: 'demo-10', type: 'signal', latitude: -20.1650, longitude: 57.4900, severity: 'MEDIUM', area: 'Port Louis North', reports: 4 },
 ];
 
 const HAZARD_ICONS = {
@@ -36,15 +37,13 @@ const HAZARD_COLORS = {
 
 const SEVERITY_COLORS = { HIGH: '#E74C3C', MEDIUM: '#F39C12', LOW: '#2ECC71' };
 
-// Radius logic per type: potholes = 0 (no circle), accidents = small, others = medium
 function getHazardRadius(type, severity) {
-  if (type === 'pothole') return 0; // exact pin only
+  if (type === 'pothole') return 0;
   if (type === 'accident') return severity === 'HIGH' ? 200 : 100;
   if (type === 'flood') return severity === 'HIGH' ? 800 : 400;
   return severity === 'HIGH' ? 500 : severity === 'MEDIUM' ? 300 : 150;
 }
 
-// Simple bounding box check: is hazard roughly between origin and dest?
 function isHazardOnRoute(hazard, origin, dest, bufferDeg = 0.03) {
   if (!origin || !dest) return false;
   const minLat = Math.min(origin.latitude, dest.latitude) - bufferDeg;
@@ -56,18 +55,38 @@ function isHazardOnRoute(hazard, origin, dest, bufferDeg = 0.03) {
   return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng;
 }
 
+// Fetch actual route polyline from OSRM (free, no API key)
+async function fetchRoute(origin, dest) {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.routes && data.routes[0]) {
+      const coords = data.routes[0].geometry.coordinates.map(([lng, lat]) => ({
+        latitude: lat,
+        longitude: lng,
+      }));
+      return coords;
+    }
+  } catch (e) {
+    console.log('Route fetch failed, using straight line');
+  }
+  return null;
+}
+
 export default function MapScreen() {
   const [location, setLocation] = useState(null);
   const [hazards, setHazards] = useState(DEMO_HAZARDS);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(false);
 
-  // Trip planner state
   const [tripMode, setTripMode] = useState(false);
   const [destInput, setDestInput] = useState('');
   const [destCoords, setDestCoords] = useState(null);
   const [tripHazards, setTripHazards] = useState([]);
+  const [routeCoords, setRouteCoords] = useState(null);
   const [showTripModal, setShowTripModal] = useState(false);
+  const [routeLoading, setRouteLoading] = useState(false);
   const mapRef = useRef(null);
 
   useEffect(() => {
@@ -86,24 +105,21 @@ export default function MapScreen() {
   const fetchHazards = async () => {
     setLoading(true);
     try {
-      // Fetch both sensor hazards and manual reports
       const [hazardsRes, reportsRes] = await Promise.allSettled([
         axios.get(`${API_URL}/api/hazards`),
         axios.get(`${API_URL}/api/reports`),
       ]);
 
       const hazardData = hazardsRes.status === 'fulfilled' && hazardsRes.value.data?.length > 0
-        ? hazardsRes.value.data : [];
+        ? hazardsRes.value.data.map(h => ({ ...h, id: `hazard-${h.id}` })) : [];
 
       const reportData = reportsRes.status === 'fulfilled' && reportsRes.value.data?.length > 0
-        ? reportsRes.value.data.filter(r => r.latitude && r.longitude) : [];
+        ? reportsRes.value.data
+            .filter(r => r.latitude && r.longitude)
+            .map(r => ({ ...r, id: `report-${r.id}`, _isReport: true }))
+        : [];
 
-      // Merge: reports become map markers with _isReport flag
-      const merged = [
-        ...DEMO_HAZARDS,
-        ...hazardData,
-        ...reportData.map(r => ({ ...r, _isReport: true })),
-      ];
+      const merged = [...DEMO_HAZARDS, ...hazardData, ...reportData];
 
       // Deduplicate by id
       const seen = new Set();
@@ -122,24 +138,33 @@ export default function MapScreen() {
 
   const geocodeDestination = async () => {
     if (!destInput.trim()) return;
+    Keyboard.dismiss();
+    setRouteLoading(true);
     try {
       const results = await Location.geocodeAsync(destInput + ', Mauritius');
       if (results.length > 0) {
         const dest = { latitude: results[0].latitude, longitude: results[0].longitude };
         setDestCoords(dest);
-        const onRoute = hazards.filter(h =>
-          isHazardOnRoute(h, location, dest)
-        );
+
+        // Fetch real road route
+        const route = location ? await fetchRoute(location, dest) : null;
+        setRouteCoords(route);
+
+        // Filter hazards near route
+        const onRoute = hazards.filter(h => isHazardOnRoute(h, location, dest));
         setTripHazards(onRoute);
         setTripMode(true);
         setShowTripModal(false);
 
-        // Fit map to show origin + destination
         if (mapRef.current && location) {
-          mapRef.current.fitToCoordinates(
-            [{ latitude: location.latitude, longitude: location.longitude }, dest],
-            { edgePadding: { top: 80, right: 40, bottom: 120, left: 40 }, animated: true }
-          );
+          const points = route ? route : [
+            { latitude: location.latitude, longitude: location.longitude },
+            dest,
+          ];
+          mapRef.current.fitToCoordinates(points, {
+            edgePadding: { top: 80, right: 40, bottom: 120, left: 40 },
+            animated: true,
+          });
         }
       } else {
         Alert.alert('Location not found', 'Try a more specific address in Mauritius.');
@@ -147,6 +172,7 @@ export default function MapScreen() {
     } catch (e) {
       Alert.alert('Error', 'Could not find that location.');
     }
+    setRouteLoading(false);
   };
 
   const cancelTrip = () => {
@@ -154,11 +180,12 @@ export default function MapScreen() {
     setDestCoords(null);
     setDestInput('');
     setTripHazards([]);
+    setRouteCoords(null);
   };
 
-  const activeHazards = tripMode ? tripHazards : (
-    filter === 'all' ? hazards : hazards.filter(h => h.type === filter)
-  );
+  const activeHazards = tripMode
+    ? tripHazards
+    : (filter === 'all' ? hazards : hazards.filter(h => h.type === filter));
 
   const filterButtons = ['all', 'pothole', 'flood', 'accident', 'roadblock'];
 
@@ -176,7 +203,7 @@ export default function MapScreen() {
         showsUserLocation={true}
         showsMyLocationButton={true}
       >
-        {/* Hazard circles — only for non-pothole types */}
+        {/* Hazard circles — non-pothole types only */}
         {activeHazards.map((hazard) => {
           const lat = hazard.latitude ?? hazard.lat;
           const lng = hazard.longitude ?? hazard.lng;
@@ -193,7 +220,7 @@ export default function MapScreen() {
           );
         })}
 
-        {/* Hazard markers — exact position */}
+        {/* Hazard markers */}
         {activeHazards.map((hazard) => {
           const lat = hazard.latitude ?? hazard.lat;
           const lng = hazard.longitude ?? hazard.lng;
@@ -213,7 +240,9 @@ export default function MapScreen() {
                   {HAZARD_ICONS[hazard.type] || HAZARD_ICONS.default}
                 </Text>
                 {hazard._isReport && (
-                  <View style={styles.reportBadge}><Text style={styles.reportBadgeText}>!</Text></View>
+                  <View style={styles.reportBadge}>
+                    <Text style={styles.reportBadgeText}>!</Text>
+                  </View>
                 )}
               </View>
               <Callout style={styles.callout}>
@@ -230,7 +259,7 @@ export default function MapScreen() {
                 ) : null}
                 <Text style={styles.calloutReports}>👥 {hazard.reports || 1} report(s)</Text>
                 <Text style={styles.calloutCoords}>
-                  {(lat).toFixed(5)}, {(lng).toFixed(5)}
+                  {Number(lat).toFixed(5)}, {Number(lng).toFixed(5)}
                 </Text>
               </Callout>
             </Marker>
@@ -239,28 +268,28 @@ export default function MapScreen() {
 
         {/* Destination marker */}
         {tripMode && destCoords && (
-          <Marker coordinate={destCoords} pinColor="#2ECC71">
+          <Marker coordinate={destCoords} anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.destMarker}>
               <Text style={styles.destMarkerText}>🏁</Text>
             </View>
           </Marker>
         )}
 
-        {/* Route line */}
+        {/* Real road route OR fallback dashed line */}
         {tripMode && destCoords && location && (
           <Polyline
-            coordinates={[
+            coordinates={routeCoords || [
               { latitude: location.latitude, longitude: location.longitude },
               destCoords,
             ]}
             strokeColor="#3498DB"
-            strokeWidth={3}
-            lineDashPattern={[8, 4]}
+            strokeWidth={4}
+            lineDashPattern={routeCoords ? undefined : [8, 4]}
           />
         )}
       </MapView>
 
-      {/* Top bar: filters OR trip mode banner */}
+      {/* Top bar */}
       {!tripMode ? (
         <View style={styles.filterContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
@@ -279,9 +308,9 @@ export default function MapScreen() {
         </View>
       ) : (
         <View style={styles.tripBanner}>
-          <Text style={styles.tripBannerText}>
-            🗺️ Trip to: <Text style={{ color: '#2ECC71' }}>{destInput}</Text>
-            {'  '}⚠️ {tripHazards.length} hazard(s) on route
+          <Text style={styles.tripBannerText} numberOfLines={1}>
+            🗺️ <Text style={{ color: '#2ECC71' }}>{destInput}</Text>
+            {'  '}⚠️ {tripHazards.length} hazard(s)
           </Text>
           <TouchableOpacity style={styles.cancelTripBtn} onPress={cancelTrip}>
             <Text style={styles.cancelTripText}>✕ Cancel</Text>
@@ -307,44 +336,57 @@ export default function MapScreen() {
           </Text>
           <Text style={styles.statLbl}>Reports</Text>
         </View>
-
-        {/* Trip planner button */}
         <TouchableOpacity
           style={styles.tripBtn}
           onPress={() => { if (tripMode) { cancelTrip(); } else { setShowTripModal(true); } }}
         >
           <Text style={styles.tripBtnText}>{tripMode ? '🗺️ Clear' : '🗺️ Trip'}</Text>
         </TouchableOpacity>
-
         <TouchableOpacity style={styles.refreshBtn} onPress={fetchHazards}>
           <Text style={styles.refreshText}>{loading ? '⏳' : '🔄'}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Trip Planner Modal */}
-      <Modal visible={showTripModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>🗺️ Plan Your Trip</Text>
-            <Text style={styles.modalSubtitle}>
-              Enter your destination to see hazards on your route
-            </Text>
-            <TextInput
-              style={styles.modalInput}
-              value={destInput}
-              onChangeText={setDestInput}
-              placeholder="e.g. Grand Baie, Curepipe, Port Louis..."
-              placeholderTextColor="#7f8c8d"
-              onSubmitEditing={geocodeDestination}
-            />
-            <TouchableOpacity style={styles.modalGoBtn} onPress={geocodeDestination}>
-              <Text style={styles.modalGoBtnText}>🔍 Show Route Hazards</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowTripModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
+      <Modal visible={showTripModal} transparent animationType="slide" onRequestClose={() => setShowTripModal(false)}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.modalKAV}
+            >
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>🗺️ Plan Your Trip</Text>
+                <Text style={styles.modalSubtitle}>
+                  Enter your destination to see hazards on your route
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={destInput}
+                  onChangeText={setDestInput}
+                  placeholder="e.g. Grand Baie, Curepipe, Port Louis..."
+                  placeholderTextColor="#7f8c8d"
+                  returnKeyType="search"
+                  onSubmitEditing={geocodeDestination}
+                  blurOnSubmit={false}
+                />
+                <TouchableOpacity
+                  style={[styles.modalGoBtn, routeLoading && { opacity: 0.6 }]}
+                  onPress={geocodeDestination}
+                  disabled={routeLoading}
+                >
+                  {routeLoading
+                    ? <ActivityIndicator color="#fff" />
+                    : <Text style={styles.modalGoBtnText}>🔍 Show Route Hazards</Text>
+                  }
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalCancelBtn} onPress={() => { Keyboard.dismiss(); setShowTripModal(false); }}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </View>
   );
@@ -429,9 +471,12 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
+  modalKAV: { justifyContent: 'flex-end' },
   modalCard: {
-    backgroundColor: '#1a1a2e', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 24, borderTopWidth: 1, borderTopColor: '#3498DB',
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 24, paddingBottom: 36,
+    borderTopWidth: 1, borderTopColor: '#3498DB',
   },
   modalTitle: { color: '#ecf0f1', fontSize: 20, fontWeight: 'bold', marginBottom: 6 },
   modalSubtitle: { color: '#7f8c8d', fontSize: 13, marginBottom: 16 },
