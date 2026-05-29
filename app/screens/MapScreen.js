@@ -140,39 +140,57 @@ export default function MapScreen() {
     if (!destInput.trim()) return;
     Keyboard.dismiss();
     setRouteLoading(true);
+
     try {
+      // Search more broadly so user can pick from multiple results
       const results = await Location.geocodeAsync(destInput + ', Mauritius');
-      if (results.length > 0) {
-        const dest = { latitude: results[0].latitude, longitude: results[0].longitude };
-        setDestCoords(dest);
 
-        // Fetch real road route
-        const route = location ? await fetchRoute(location, dest) : null;
-        setRouteCoords(route);
-
-        // Filter hazards near route
-        const onRoute = hazards.filter(h => isHazardOnRoute(h, location, dest));
-        setTripHazards(onRoute);
-        setTripMode(true);
-        setShowTripModal(false);
-
-        if (mapRef.current && location) {
-          const points = route ? route : [
-            { latitude: location.latitude, longitude: location.longitude },
-            dest,
-          ];
-          mapRef.current.fitToCoordinates(points, {
-            edgePadding: { top: 80, right: 40, bottom: 120, left: 40 },
-            animated: true,
-          });
-        }
-      } else {
+      if (results.length === 0) {
         Alert.alert('Location not found', 'Try a more specific address in Mauritius.');
+        setRouteLoading(false);
+        return;
+      }
+
+      if (results.length === 1) {
+        // Only one result — go straight to it
+        await applyDestination(results[0]);
+      } else {
+        // Multiple results — let user pick
+        const options = results.slice(0, 5).map((r, i) => ({
+          text: `📍 ${r.street || ''} ${r.city || ''} ${r.region || ''}`.trim() || `Option ${i + 1}`,
+          onPress: () => applyDestination(r),
+        }));
+        options.push({ text: 'Cancel', style: 'cancel' });
+        Alert.alert('Select Location', 'Multiple results found — which one?', options);
       }
     } catch (e) {
       Alert.alert('Error', 'Could not find that location.');
     }
     setRouteLoading(false);
+  };
+
+  const applyDestination = async (result) => {
+    const dest = { latitude: result.latitude, longitude: result.longitude };
+    setDestCoords(dest);
+
+    const route = location ? await fetchRoute(location, dest) : null;
+    setRouteCoords(route);
+
+    const onRoute = hazards.filter(h => isHazardOnRoute(h, location, dest));
+    setTripHazards(onRoute);
+    setTripMode(true);
+    setShowTripModal(false);
+
+    if (mapRef.current && location) {
+      const points = route || [
+        { latitude: location.latitude, longitude: location.longitude },
+        dest,
+      ];
+      mapRef.current.fitToCoordinates(points, {
+        edgePadding: { top: 80, right: 40, bottom: 120, left: 40 },
+        animated: true,
+      });
+    }
   };
 
   const cancelTrip = () => {
