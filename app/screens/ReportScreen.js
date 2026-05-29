@@ -7,8 +7,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import axios from 'axios';
 
-const API_URL = 'http://192.168.1.100:3001'; // Change to your IP
-
+import config from '../config';
+const API_URL = config.API_URL;
 const HAZARD_TYPES = [
   { id: 'pothole', label: 'Pothole', icon: '🕳️', color: '#E74C3C' },
   { id: 'flood', label: 'Flood', icon: '🌊', color: '#3498DB' },

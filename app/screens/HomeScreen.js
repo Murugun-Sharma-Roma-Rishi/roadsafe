@@ -9,7 +9,8 @@ import axios from 'axios';
 
 // ⚠️ CHANGE THIS to your computer's IP address when testing on phone
 // Run "ipconfig" on Windows or "ifconfig" on Mac to find your IP
-const API_URL = 'http://192.168.1.100:3001';
+import config from '../config';
+const API_URL = config.API_URL;
 
 const POTHOLE_THRESHOLD = 2.5;   // G-force to trigger pothole
 const CRASH_THRESHOLD = 4.0;     // G-force to trigger crash alert

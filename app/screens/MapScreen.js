@@ -7,8 +7,8 @@ import MapView, { Marker, Heatmap, Callout, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import axios from 'axios';
 
-const API_URL = 'http://192.168.1.100:3001'; // Change to your IP
-
+import config from '../config';
+const API_URL = config.API_URL;
 // Demo hazard data for Mauritius (replace with real API data)
 const DEMO_HAZARDS = [
   { id: 1, type: 'pothole', lat: -20.1609, lng: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
