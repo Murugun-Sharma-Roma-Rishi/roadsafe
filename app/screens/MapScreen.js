@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import MapView, { Marker, Circle, Polyline, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
-import * as Linking from 'expo-linking';
+import { Linking } from 'react-native';
 import axios from 'axios';
 import config from '../config';
 

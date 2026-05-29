@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Accelerometer, Gyroscope } from 'expo-sensors';
 import * as Location from 'expo-location';
-import * as Linking from 'expo-linking';
+import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const HARSH_BRAKE_THRESHOLD = 1.5;
