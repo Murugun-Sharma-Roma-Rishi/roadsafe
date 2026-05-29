@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoadSafe Mauritius — Government Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0d0d1a; --surface: #1a1a2e; --surface2: #16213e;
+    --text: #ecf0f1; --muted: #7f8c8d; --border: #2d2d4e;
+    --red: #E74C3C; --green: #2ECC71; --blue: #3498DB;
+    --orange: #F39C12; --purple: #9B59B6;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; }
+  .header {
+    background: var(--surface); padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .header-left h1 { font-size: 20px; font-weight: 700; }
+  .header-left p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .live-badge {
+    background: var(--red); color: #fff; padding: 4px 12px;
+    border-radius: 20px; font-size: 12px; font-weight: 600;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+  .layout { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 16px; }
+  .layout-full { padding: 0 16px 16px; }
+  .layout-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 16px 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px;
+  }
+  .card h3 { font-size: 14px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .big-num { font-size: 42px; font-weight: 700; }
+  .big-num.red { color: var(--red); }
+  .big-num.green { color: var(--green); }
+  .big-num.blue { color: var(--blue); }
+  .big-num.orange { color: var(--orange); }
+  .card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+  #map { height: 420px; border-radius: 8px; }
+  .chart-wrap { position: relative; height: 240px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+  .badge {
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    display: inline-block;
+  }
+  .badge-HIGH { background: rgba(231,76,60,0.15); color: var(--red); }
+  .badge-MEDIUM { background: rgba(243,156,18,0.15); color: var(--orange); }
+  .badge-LOW { background: rgba(46,204,113,0.15); color: var(--green); }
+  .badge-pending { background: rgba(52,152,219,0.15); color: var(--blue); }
+  .badge-resolved { background: rgba(46,204,113,0.15); color: var(--green); }
+  .priority-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .priority-row:last-child { border-bottom: none; }
+  .priority-rank { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+  .rank-1 { background: rgba(231,76,60,0.2); color: var(--red); }
+  .rank-2 { background: rgba(243,156,18,0.2); color: var(--orange); }
+  .rank-3 { background: rgba(52,152,219,0.2); color: var(--blue); }
+  .priority-info { flex: 1; }
+  .priority-area { font-size: 14px; font-weight: 600; }
+  .priority-detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 4px; }
+  .progress-fill { height: 100%; border-radius: 3px; background: var(--red); }
+  .refresh-btn {
+    background: var(--blue); color: #fff; border: none; padding: 8px 18px;
+    border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  .refresh-btn:hover { background: #2980b9; }
+  .top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .last-update { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>🛡️ RoadSafe Mauritius — Government Dashboard</h1>
+    <p>Ministry of Land Transport & Light Rail | Crowdsourced Road Intelligence</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="last-update" id="lastUpdate">Loading...</span>
+    <span class="live-badge">🔴 LIVE</span>
+    <button class="refresh-btn" onclick="loadAll()">🔄 Refresh</button>
+  </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="layout">
+  <div class="card">
+    <h3>Total Hazards Detected</h3>
+    <div class="big-num red" id="kpiHazards">—</div>
+    <p style="color:var(--muted);font-size:12px;margin-top:6px">Auto-detected by sensors</p>
+  </div>
+  <div class="card">
+    <h3>Community Reports</h3>
+    <div class="big-num blue" id="kpiReports">—</div>
+    <p style="color:var(--muted);font-size:12px;margin-top:6px">Anonymous submissions</p>
+  </div>
+  <div class="card">
+    <h3>High Severity Zones</h3>
+    <div class="big-num orange" id="kpiHigh">—</div>
+    <p style="color:var(--muted);font-size:12px;margin-top:6px">Needs immediate action</p>
+  </div>
+</div>
+
+<!-- Map + Charts Row -->
+<div class="layout-2">
+  <div class="card">
+    <div class="top-bar">
+      <div class="card-title">🗺️ Live Hazard Map — Mauritius</div>
+    </div>
+    <div id="map"></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card">
+      <div class="card-title">📊 Hazards by Type</div>
+      <div class="chart-wrap">
+        <canvas id="typeChart"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚡ Severity Distribution</div>
+      <div class="chart-wrap">
+        <canvas id="sevChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Safety Scores + Priority Maintenance -->
+<div class="layout-2">
+  <div class="card">
+    <div class="card-title">🏆 Road Safety Scores by Area</div>
+    <div class="chart-wrap">
+      <canvas id="scoreChart"></canvas>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">🔧 Maintenance Priority Rankings</div>
+    <div id="priorityList">Loading...</div>
+  </div>
+</div>
+
+<!-- Reports Table -->
+<div class="layout-full">
+  <div class="card">
+    <div class="top-bar">
+      <div class="card-title">📋 Recent Community Reports</div>
+      <select id="statusFilter" onchange="filterReports()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:8px;font-size:13px">
+        <option value="all">All Status</option>
+        <option value="pending">Pending</option>
+        <option value="resolved">Resolved</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th><th>Severity</th><th>Location</th><th>Description</th><th>Time</th><th>Status</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="reportsTable">
+          <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Loading reports...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:3001';
+let map, allReports = [];
+
+// DEMO DATA for when server is offline
+const DEMO_STATS = {
+  total: { hazards: 247, reports: 89, sos: 3, highSeverity: 42 },
+  hazardTypes: { pothole: 134, flood: 28, accident: 45, roadblock: 18, signal: 22 },
+  bySeverity: { HIGH: 42, MEDIUM: 118, LOW: 87 },
+  lastUpdated: new Date().toISOString(),
+};
+
+const DEMO_SCORES = [
+  { name: 'Port Louis', score: 52, hazardCount: 28 },
+  { name: 'Quatre Bornes', score: 71, hazardCount: 14 },
+  { name: 'Vacoas', score: 65, hazardCount: 18 },
+  { name: 'Curepipe', score: 78, hazardCount: 10 },
+  { name: 'Rose Hill', score: 60, hazardCount: 20 },
+  { name: 'Mahebourg', score: 83, hazardCount: 8 },
+  { name: 'Grand Baie', score: 88, hazardCount: 6 },
+  { name: 'Flacq', score: 55, hazardCount: 24 },
+];
+
+const DEMO_REPORTS = [
+  { id: '1', type: 'pothole', severity: 'HIGH', latitude: -20.1609, longitude: 57.4992, description: 'Large pothole near hospital junction', createdAt: new Date(Date.now()-3600000).toISOString(), status: 'pending' },
+  { id: '2', type: 'flood', severity: 'HIGH', latitude: -20.2368, longitude: 57.5165, description: 'Road flooded after heavy rain', createdAt: new Date(Date.now()-7200000).toISOString(), status: 'pending' },
+  { id: '3', type: 'signal', severity: 'MEDIUM', latitude: -20.3484, longitude: 57.5012, description: 'Traffic light not working at main junction', createdAt: new Date(Date.now()-86400000).toISOString(), status: 'resolved' },
+  { id: '4', type: 'roadblock', severity: 'MEDIUM', latitude: -20.0474, longitude: 57.5816, description: 'Road works blocking lane', createdAt: new Date(Date.now()-172800000).toISOString(), status: 'pending' },
+  { id: '5', type: 'accident', severity: 'HIGH', latitude: -20.4637, longitude: 57.4375, description: 'Multi-vehicle accident debris on road', createdAt: new Date(Date.now()-259200000).toISOString(), status: 'resolved' },
+];
+
+const HAZARD_ICONS = { pothole:'🕳️', flood:'🌊', accident:'💥', roadblock:'🚧', signal:'🚦', debris:'⚠️' };
+const SEVERITY_COLOR = { HIGH:'#E74C3C', MEDIUM:'#F39C12', LOW:'#2ECC71' };
+
+function initMap() {
+  map = L.map('map').setView([-20.2744, 57.5512], 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Add demo hazard markers
+  const demoHazards = [
+    { lat: -20.1609, lng: 57.4992, type: 'pothole', sev: 'HIGH', area: 'Port Louis' },
+    { lat: -20.2368, lng: 57.5165, type: 'flood', sev: 'HIGH', area: 'Quatre Bornes' },
+    { lat: -20.3484, lng: 57.5012, type: 'accident', sev: 'MEDIUM', area: 'Rose Hill' },
+    { lat: -20.0474, lng: 57.5816, type: 'pothole', sev: 'LOW', area: 'Triolet' },
+    { lat: -20.4637, lng: 57.4375, type: 'roadblock', sev: 'MEDIUM', area: 'Mahebourg' },
+    { lat: -20.2540, lng: 57.4760, type: 'pothole', sev: 'HIGH', area: 'Vacoas' },
+    { lat: -20.1020, lng: 57.5560, type: 'flood', sev: 'HIGH', area: 'Flacq' },
+    { lat: -20.1950, lng: 57.5830, type: 'accident', sev: 'MEDIUM', area: 'Curepipe' },
+    { lat: -20.0133, lng: 57.5833, type: 'pothole', sev: 'LOW', area: 'Grand Baie' },
+    { lat: -20.3900, lng: 57.6100, type: 'signal', sev: 'MEDIUM', area: 'Souillac' },
+  ];
+
+  demoHazards.forEach(h => {
+    const color = SEVERITY_COLOR[h.sev];
+    const icon = L.divIcon({
+      html: `<div style="background:${color};width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid white;font-size:16px">${HAZARD_ICONS[h.type]||'📍'}</div>`,
+      iconSize: [32, 32], className: ''
+    });
+    L.marker([h.lat, h.lng], { icon })
+      .addTo(map)
+      .bindPopup(`<strong>${HAZARD_ICONS[h.type]} ${h.type.toUpperCase()}</strong><br>📍 ${h.area}<br>⚡ Severity: <strong style="color:${color}">${h.sev}</strong>`);
+  });
+}
+
+let typeChart, sevChart, scoreChart;
+
+function buildCharts(stats, scores) {
+  const t = stats.hazardTypes || {};
+  const labels = Object.keys(t);
+  const values = Object.values(t);
+  const colors = ['#E74C3C','#3498DB','#F39C12','#9B59B6','#2ECC71','#95A5A6'];
+
+  if (typeChart) typeChart.destroy();
+  typeChart = new Chart(document.getElementById('typeChart'), {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { color: '#ecf0f1', font: { size: 11 } } } }
+    }
+  });
+
+  const s = stats.bySeverity || {};
+  if (sevChart) sevChart.destroy();
+  sevChart = new Chart(document.getElementById('sevChart'), {
+    type: 'bar',
+    data: {
+      labels: ['HIGH', 'MEDIUM', 'LOW'],
+      datasets: [{ data: [s.HIGH||0, s.MEDIUM||0, s.LOW||0], backgroundColor: ['#E74C3C','#F39C12','#2ECC71'], borderRadius: 6, borderSkipped: false }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#bdc3c7' }, grid: { color: '#2d2d4e' } },
+        y: { ticks: { color: '#bdc3c7' }, grid: { color: '#2d2d4e' } }
+      }
+    }
+  });
+
+  if (scoreChart) scoreChart.destroy();
+  const sortedScores = [...scores].sort((a, b) => a.score - b.score);
+  scoreChart = new Chart(document.getElementById('scoreChart'), {
+    type: 'bar',
+    data: {
+      labels: sortedScores.map(s => s.name),
+      datasets: [{
+        data: sortedScores.map(s => s.score),
+        backgroundColor: sortedScores.map(s => s.score >= 80 ? '#2ECC71' : s.score >= 60 ? '#F39C12' : '#E74C3C'),
+        borderRadius: 4, borderSkipped: false
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { min: 0, max: 100, ticks: { color: '#bdc3c7' }, grid: { color: '#2d2d4e' } },
+        y: { ticks: { color: '#bdc3c7' }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+function renderPriority(scores) {
+  const sorted = [...scores].sort((a, b) => a.score - b.score).slice(0, 5);
+  const html = sorted.map((area, i) => `
+    <div class="priority-row">
+      <div class="priority-rank rank-${i+1}">${i+1}</div>
+      <div class="priority-info">
+        <div class="priority-area">${area.name}</div>
+        <div class="priority-detail">Safety Score: ${area.score}/100 • ${area.hazardCount} hazards reported</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:${100-area.score}%;background:${area.score<60?'#E74C3C':area.score<80?'#F39C12':'#2ECC71'}"></div>
+        </div>
+      </div>
+      <span class="badge badge-${area.score < 60 ? 'HIGH' : area.score < 80 ? 'MEDIUM' : 'LOW'}">
+        ${area.score < 60 ? 'URGENT' : area.score < 80 ? 'MODERATE' : 'GOOD'}
+      </span>
+    </div>
+  `).join('');
+  document.getElementById('priorityList').innerHTML = html;
+}
+
+function renderReports(reports) {
+  allReports = reports;
+  filterReports();
+}
+
+function filterReports() {
+  const filter = document.getElementById('statusFilter').value;
+  const filtered = filter === 'all' ? allReports : allReports.filter(r => r.status === filter);
+  const tbody = document.getElementById('reportsTable');
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">No reports found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.slice(0, 20).map(r => `
+    <tr>
+      <td>${HAZARD_ICONS[r.type]||'⚠️'} ${r.type}</td>
+      <td><span class="badge badge-${r.severity}">${r.severity}</span></td>
+      <td style="font-size:11px;font-family:monospace">${r.latitude?.toFixed(4)||'—'}, ${r.longitude?.toFixed(4)||'—'}</td>
+      <td style="max-width:200px;font-size:12px">${r.description||'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${new Date(r.createdAt).toLocaleString()}</td>
+      <td><span class="badge badge-${r.status}">${r.status}</span></td>
+      <td>
+        ${r.status === 'pending' ? `<button onclick="updateStatus('${r.id}','resolved')" style="background:rgba(46,204,113,0.1);color:#2ECC71;border:1px solid #2ECC71;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px">✓ Resolve</button>` : '—'}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function updateStatus(id, status) {
+  try {
+    await fetch(`${API}/api/reports/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    loadAll();
+  } catch(e) {
+    const r = allReports.find(r => r.id === id);
+    if (r) r.status = status;
+    filterReports();
+  }
+}
+
+async function loadAll() {
+  document.getElementById('lastUpdate').textContent = 'Refreshing...';
+  try {
+    const [statsRes, scoresRes, reportsRes] = await Promise.all([
+      fetch(`${API}/api/stats`).then(r => r.json()),
+      fetch(`${API}/api/safety-score`).then(r => r.json()),
+      fetch(`${API}/api/reports`).then(r => r.json()),
+    ]);
+    document.getElementById('kpiHazards').textContent = statsRes.total.hazards;
+    document.getElementById('kpiReports').textContent = statsRes.total.reports;
+    document.getElementById('kpiHigh').textContent = statsRes.total.highSeverity;
+    buildCharts(statsRes, scoresRes);
+    renderPriority(scoresRes);
+    renderReports(reportsRes);
+  } catch(e) {
+    console.log('Using demo data (server offline)');
+    document.getElementById('kpiHazards').textContent = DEMO_STATS.total.hazards;
+    document.getElementById('kpiReports').textContent = DEMO_STATS.total.reports;
+    document.getElementById('kpiHigh').textContent = DEMO_STATS.total.highSeverity;
+    buildCharts(DEMO_STATS, DEMO_SCORES);
+    renderPriority(DEMO_SCORES);
+    renderReports(DEMO_REPORTS);
+  }
+  document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+}
+
+initMap();
+loadAll();
+setInterval(loadAll, 30000); // Auto-refresh every 30 seconds
+</script>
+</body>
+</html>
