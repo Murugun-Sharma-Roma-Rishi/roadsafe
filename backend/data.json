@@ -1,0 +1,195 @@
+{
+  "hazards": [
+    {
+      "id": "1ea6ca4c-d310-4bf6-b609-5d613017d157",
+      "type": "pothole",
+      "severity": "HIGH",
+      "latitude": -20.110336785247217,
+      "longitude": 57.58439945839561,
+      "magnitude": "3.669",
+      "sensorData": {
+        "x": 2.062530517578125,
+        "y": 2.704376220703125,
+        "z": 1.3756103515625
+      },
+      "timestamp": "2026-05-29T08:30:52.779Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:30:53.006Z"
+    },
+    {
+      "id": "476fd578-d5de-4622-865a-6b26821c86e9",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110336786519017,
+      "longitude": 57.58439971080398,
+      "magnitude": "2.593",
+      "sensorData": {
+        "x": -1.6083221435546875,
+        "y": -1.4760589599609375,
+        "z": -1.399749755859375
+      },
+      "timestamp": "2026-05-29T08:34:13.840Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:34:14.063Z"
+    },
+    {
+      "id": "d75dfd97-3bdd-459c-9bb8-8567cb51f9a0",
+      "type": "pothole",
+      "severity": "MEDIUM",
+      "latitude": -20.110336786519017,
+      "longitude": 57.58439971080398,
+      "magnitude": "3.303",
+      "sensorData": {
+        "x": -1.3775787353515625,
+        "y": -2.9781341552734375,
+        "z": -0.3757781982421875
+      },
+      "timestamp": "2026-05-29T08:34:29.436Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:34:29.656Z"
+    },
+    {
+      "id": "988f7c7a-c1b7-4ce4-b1e0-f4756753db30",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110336787620035,
+      "longitude": 57.58439992931474,
+      "magnitude": "2.305",
+      "timestamp": "2026-05-29T08:53:38.735Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:53:39.039Z"
+    },
+    {
+      "id": "44600197-6493-4dc4-bbbb-dcb195a67274",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110336787620035,
+      "longitude": 57.58439992931474,
+      "magnitude": "2.322",
+      "timestamp": "2026-05-29T08:53:48.722Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:53:48.995Z"
+    },
+    {
+      "id": "b263049a-8577-48e1-bdb5-853917153454",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110336787620035,
+      "longitude": 57.58439992931474,
+      "magnitude": "2.071",
+      "timestamp": "2026-05-29T08:53:53.427Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T08:53:53.705Z"
+    }
+  ],
+  "reports": [
+    {
+      "id": "b2bea426-b665-40d3-ab79-22358d65b113",
+      "type": "flood",
+      "severity": "HIGH",
+      "description": "",
+      "latitude": -20.110336781473375,
+      "longitude": 57.584398709420185,
+      "hasPhoto": false,
+      "timestamp": "2026-05-29T08:30:33.290Z",
+      "anonymous": true,
+      "status": "pending",
+      "createdAt": "2026-05-29T08:30:33.635Z"
+    },
+    {
+      "id": "6177e1b4-a729-48a1-96d7-e5ed1430701d",
+      "type": "pothole",
+      "severity": "MEDIUM",
+      "description": "Auto-detected by sensor during trip monitoring",
+      "latitude": -20.110336786816827,
+      "longitude": 57.584399769908245,
+      "timestamp": "2026-05-29T08:34:01.316Z",
+      "anonymous": true,
+      "autoDetected": true,
+      "status": "pending",
+      "createdAt": "2026-05-29T08:34:01.561Z"
+    },
+    {
+      "id": "cf2452ab-063b-486e-8098-d5b2d5dbd4e3",
+      "type": "pothole",
+      "severity": "MEDIUM",
+      "description": "Auto-detected by sensor during trip monitoring",
+      "latitude": -20.110336783706746,
+      "longitude": 57.584399152666585,
+      "timestamp": "2026-05-29T08:34:06.113Z",
+      "anonymous": true,
+      "autoDetected": true,
+      "status": "pending",
+      "createdAt": "2026-05-29T08:34:06.333Z"
+    }
+  ],
+  "sos": [
+    {
+      "id": "b29ae7a1-ee79-4950-ac7c-a05174c6bffa",
+      "trigger": "manual",
+      "latitude": -20.110336785247217,
+      "longitude": 57.58439945839561,
+      "timestamp": "2026-05-29T08:30:55.258Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110336785247217,57.58439945839561",
+      "status": "active",
+      "createdAt": "2026-05-29T08:30:55.494Z"
+    },
+    {
+      "id": "9ca4a084-e157-432a-9224-5c35dc99eb9c",
+      "trigger": "auto_crash_detection",
+      "latitude": -20.110336785247217,
+      "longitude": 57.58439945839561,
+      "timestamp": "2026-05-29T08:31:02.686Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110336785247217,57.58439945839561",
+      "status": "active",
+      "createdAt": "2026-05-29T08:31:02.914Z"
+    },
+    {
+      "id": "c9d1c05f-7b02-4eab-9719-e71593cb332b",
+      "trigger": "manual",
+      "latitude": -20.1103367809956,
+      "longitude": 57.5843986145986,
+      "timestamp": "2026-05-29T08:31:36.520Z",
+      "mapsLink": "https://maps.google.com/?q=-20.1103367809956,57.5843986145986",
+      "status": "active",
+      "createdAt": "2026-05-29T08:31:36.746Z"
+    },
+    {
+      "id": "1d8d8848-6311-470f-86d4-50473756eb6a",
+      "trigger": "manual",
+      "latitude": -20.110336786519017,
+      "longitude": 57.58439971080398,
+      "timestamp": "2026-05-29T08:34:17.548Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110336786519017,57.58439971080398",
+      "status": "active",
+      "createdAt": "2026-05-29T08:34:17.784Z"
+    },
+    {
+      "id": "30ca02b7-9384-4a32-b19d-858af04756ec",
+      "trigger": "auto_crash_detection",
+      "latitude": -20.110336786519017,
+      "longitude": 57.58439971080398,
+      "timestamp": "2026-05-29T08:34:23.952Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110336786519017,57.58439971080398",
+      "status": "active",
+      "createdAt": "2026-05-29T08:34:24.171Z"
+    },
+    {
+      "id": "fd1c6678-b1fc-41b4-b353-580de73bd24b",
+      "trigger": "crash_auto",
+      "latitude": -20.110336787620035,
+      "longitude": 57.58439992931474,
+      "timestamp": "2026-05-29T08:54:10.317Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110336787620035,57.58439992931474",
+      "status": "active",
+      "createdAt": "2026-05-29T08:54:10.606Z"
+    }
+  ],
+  "drivers": []
+}
