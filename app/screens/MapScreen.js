@@ -3,13 +3,13 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator
 } from 'react-native';
-import MapView, { Marker, Heatmap, Callout, Circle } from 'react-native-maps';
+import MapView, { Marker, Circle, Callout } from 'react-native-maps';
 import * as Location from 'expo-location';
 import axios from 'axios';
-
 import config from '../config';
+
 const API_URL = config.API_URL;
-// Demo hazard data for Mauritius (replace with real API data)
+
 const DEMO_HAZARDS = [
   { id: 1, type: 'pothole', lat: -20.1609, lng: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
   { id: 2, type: 'flood', lat: -20.2368, lng: 57.5165, severity: 'MEDIUM', area: 'Quatre Bornes', reports: 8 },
@@ -24,39 +24,22 @@ const DEMO_HAZARDS = [
 ];
 
 const HAZARD_ICONS = {
-  pothole: '🕳️',
-  flood: '🌊',
-  accident: '💥',
-  roadblock: '🚧',
-  signal: '🚦',
-  debris: '⚠️',
-  default: '📍',
+  pothole: '🕳️', flood: '🌊', accident: '💥',
+  roadblock: '🚧', signal: '🚦', debris: '⚠️', default: '📍',
 };
 
 const HAZARD_COLORS = {
-  pothole: '#E74C3C',
-  flood: '#3498DB',
-  accident: '#FF6B35',
-  roadblock: '#F39C12',
-  signal: '#9B59B6',
-  default: '#95A5A6',
+  pothole: '#E74C3C', flood: '#3498DB', accident: '#FF6B35',
+  roadblock: '#F39C12', signal: '#9B59B6', default: '#95A5A6',
 };
 
-const SEVERITY_COLORS = {
-  HIGH: '#E74C3C',
-  MEDIUM: '#F39C12',
-  LOW: '#2ECC71',
-};
+const SEVERITY_COLORS = { HIGH: '#E74C3C', MEDIUM: '#F39C12', LOW: '#2ECC71' };
 
 export default function MapScreen() {
   const [location, setLocation] = useState(null);
   const [hazards, setHazards] = useState(DEMO_HAZARDS);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(false);
-  const [showHeatmap, setShowHeatmap] = useState(true);
-
-  // Mauritius center coordinates
-  const MAURITIUS_CENTER = { latitude: -20.2744, longitude: 57.5512 };
 
   useEffect(() => {
     getLocation();
@@ -75,11 +58,8 @@ export default function MapScreen() {
     setLoading(true);
     try {
       const res = await axios.get(`${API_URL}/api/hazards`);
-      if (res.data && res.data.length > 0) {
-        setHazards(res.data);
-      }
+      if (res.data && res.data.length > 0) setHazards(res.data);
     } catch (e) {
-      // Use demo data if server offline
       console.log('Using demo hazards');
     }
     setLoading(false);
@@ -89,12 +69,6 @@ export default function MapScreen() {
     ? hazards
     : hazards.filter(h => h.type === filter);
 
-  const heatmapPoints = filteredHazards.map(h => ({
-    latitude: h.lat || h.latitude,
-    longitude: h.lng || h.longitude,
-    weight: h.severity === 'HIGH' ? 1 : h.severity === 'MEDIUM' ? 0.6 : 0.3,
-  }));
-
   const filterButtons = ['all', 'pothole', 'flood', 'accident', 'roadblock'];
 
   return (
@@ -102,30 +76,29 @@ export default function MapScreen() {
       <MapView
         style={styles.map}
         initialRegion={{
-          latitude: MAURITIUS_CENTER.latitude,
-          longitude: MAURITIUS_CENTER.longitude,
+          latitude: -20.2744,
+          longitude: 57.5512,
           latitudeDelta: 0.8,
           longitudeDelta: 0.8,
         }}
-        mapType="standard"
         showsUserLocation={true}
         showsMyLocationButton={true}
       >
-        {/* Heatmap overlay */}
-        {showHeatmap && heatmapPoints.length > 0 && (
-          <Heatmap
-            points={heatmapPoints}
-            opacity={0.7}
-            radius={40}
-            gradient={{
-              colors: ['#00ff00', '#ffff00', '#ff8800', '#ff0000'],
-              startPoints: [0.1, 0.4, 0.7, 1.0],
-              colorMapSize: 256,
+        {/* Colored circles as heatmap substitute */}
+        {filteredHazards.map((hazard) => (
+          <Circle
+            key={`circle-${hazard.id}`}
+            center={{
+              latitude: hazard.lat || hazard.latitude,
+              longitude: hazard.lng || hazard.longitude,
             }}
+            radius={hazard.severity === 'HIGH' ? 1500 : hazard.severity === 'MEDIUM' ? 1000 : 600}
+            strokeColor={SEVERITY_COLORS[hazard.severity] + '80'}
+            fillColor={SEVERITY_COLORS[hazard.severity] + '25'}
           />
-        )}
+        ))}
 
-        {/* Individual hazard markers */}
+        {/* Hazard markers */}
         {filteredHazards.map((hazard) => (
           <Marker
             key={hazard.id}
@@ -133,7 +106,6 @@ export default function MapScreen() {
               latitude: hazard.lat || hazard.latitude,
               longitude: hazard.lng || hazard.longitude,
             }}
-            pinColor={HAZARD_COLORS[hazard.type] || HAZARD_COLORS.default}
           >
             <View style={[styles.markerPin, { backgroundColor: HAZARD_COLORS[hazard.type] || '#95A5A6' }]}>
               <Text style={styles.markerEmoji}>
@@ -148,7 +120,7 @@ export default function MapScreen() {
               <Text style={[styles.calloutSeverity, { color: SEVERITY_COLORS[hazard.severity] }]}>
                 ⚡ Severity: {hazard.severity}
               </Text>
-              <Text style={styles.calloutReports}>👥 {hazard.reports} community reports</Text>
+              <Text style={styles.calloutReports}>👥 {hazard.reports} reports</Text>
             </Callout>
           </Marker>
         ))}
@@ -157,9 +129,9 @@ export default function MapScreen() {
         {location && (
           <Circle
             center={{ latitude: location.latitude, longitude: location.longitude }}
-            radius={500}
-            strokeColor="rgba(52, 152, 219, 0.5)"
-            fillColor="rgba(52, 152, 219, 0.1)"
+            radius={300}
+            strokeColor="rgba(52,152,219,0.6)"
+            fillColor="rgba(52,152,219,0.15)"
           />
         )}
       </MapView>
@@ -178,14 +150,6 @@ export default function MapScreen() {
               </Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity
-            style={[styles.filterBtn, showHeatmap && styles.filterBtnActive]}
-            onPress={() => setShowHeatmap(!showHeatmap)}
-          >
-            <Text style={[styles.filterText, showHeatmap && styles.filterTextActive]}>
-              🌡️ Heatmap
-            </Text>
-          </TouchableOpacity>
         </ScrollView>
       </View>
 
@@ -193,19 +157,19 @@ export default function MapScreen() {
       <View style={styles.statsBar}>
         <View style={styles.statItem}>
           <Text style={styles.statNum}>{filteredHazards.length}</Text>
-          <Text style={styles.statLbl}>Active Hazards</Text>
+          <Text style={styles.statLbl}>Hazards</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statNum, { color: '#E74C3C' }]}>
             {filteredHazards.filter(h => h.severity === 'HIGH').length}
           </Text>
-          <Text style={styles.statLbl}>High Severity</Text>
+          <Text style={styles.statLbl}>High Risk</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={styles.statNum}>
             {filteredHazards.reduce((s, h) => s + (h.reports || 0), 0)}
           </Text>
-          <Text style={styles.statLbl}>Total Reports</Text>
+          <Text style={styles.statLbl}>Reports</Text>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={fetchHazards}>
           <Text style={styles.refreshText}>{loading ? '⏳' : '🔄'}</Text>
@@ -218,12 +182,10 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-  filterContainer: {
-    position: 'absolute', top: 10, left: 0, right: 0,
-  },
+  filterContainer: { position: 'absolute', top: 10, left: 0, right: 0 },
   filterScroll: { paddingHorizontal: 10, gap: 6 },
   filterBtn: {
-    backgroundColor: 'rgba(26, 26, 46, 0.9)',
+    backgroundColor: 'rgba(26,26,46,0.92)',
     paddingHorizontal: 12, paddingVertical: 8,
     borderRadius: 20, borderWidth: 1, borderColor: '#2d2d4e',
   },
@@ -232,7 +194,7 @@ const styles = StyleSheet.create({
   filterTextActive: { color: '#fff' },
   statsBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(13, 13, 26, 0.95)',
+    backgroundColor: 'rgba(13,13,26,0.95)',
     flexDirection: 'row', padding: 12, alignItems: 'center',
     borderTopWidth: 1, borderTopColor: '#2d2d4e',
   },
@@ -247,8 +209,8 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: '#fff',
   },
   markerEmoji: { fontSize: 18 },
-  callout: { width: 200, padding: 8 },
-  calloutTitle: { fontSize: 14, fontWeight: 'bold', color: '#2c3e50', marginBottom: 4 },
+  callout: { width: 180, padding: 8 },
+  calloutTitle: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50', marginBottom: 4 },
   calloutArea: { fontSize: 12, color: '#555', marginBottom: 2 },
   calloutSeverity: { fontSize: 12, fontWeight: '600', marginBottom: 2 },
   calloutReports: { fontSize: 11, color: '#888' },
