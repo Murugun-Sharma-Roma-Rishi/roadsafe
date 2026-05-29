@@ -221,3 +221,12 @@ node_modules/
 dist/
 build/
 .DS_Store
+# Never push these to GitHub
+roadsafe-mauritius/app/config.js
+roadsafe-mauritius/backend/data.json
+node_modules/
+.expo/
+*.env
+.DS_Store
+config.js
+.env
