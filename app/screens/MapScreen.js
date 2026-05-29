@@ -1,93 +1,83 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, TextInput, Modal,
-  Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard
+  ScrollView, TextInput, Alert, Modal, FlatList
 } from 'react-native';
-import MapView, { Marker, Circle, Polyline, Callout } from 'react-native-maps';
+import MapView, { Marker, Circle, Callout, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { Linking } from 'react-native';
 import axios from 'axios';
 import config from '../config';
+import {
+  ACCIDENT_BLACK_SPOTS,
+  TRAFFIC_SEGMENTS,
+  SPEED_ZONES,
+  getSpeedLimitForLocation,
+  getTrafficColor,
+} from '../data/mauritiusData';
 
 const API_URL = config.API_URL;
 
 const DEMO_HAZARDS = [
-  { id: 'demo-1', type: 'pothole', latitude: -20.1609, longitude: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
-  { id: 'demo-2', type: 'flood', latitude: -20.2368, longitude: 57.5165, severity: 'MEDIUM', area: 'Quatre Bornes', reports: 8 },
-  { id: 'demo-3', type: 'accident', latitude: -20.3484, longitude: 57.5012, severity: 'HIGH', area: 'Rose Hill', reports: 5 },
-  { id: 'demo-4', type: 'pothole', latitude: -20.0474, longitude: 57.5816, severity: 'LOW', area: 'Triolet', reports: 3 },
-  { id: 'demo-5', type: 'roadblock', latitude: -20.4637, longitude: 57.4375, severity: 'MEDIUM', area: 'Mahebourg', reports: 6 },
-  { id: 'demo-6', type: 'pothole', latitude: -20.2540, longitude: 57.4760, severity: 'HIGH', area: 'Vacoas', reports: 15 },
-  { id: 'demo-7', type: 'flood', latitude: -20.1020, longitude: 57.5560, severity: 'HIGH', area: 'Flacq', reports: 10 },
-  { id: 'demo-8', type: 'accident', latitude: -20.1950, longitude: 57.5830, severity: 'MEDIUM', area: 'Curepipe', reports: 7 },
-  { id: 'demo-9', type: 'pothole', latitude: -20.3900, longitude: 57.6100, severity: 'LOW', area: 'Souillac', reports: 2 },
-  { id: 'demo-10', type: 'signal', latitude: -20.1650, longitude: 57.4900, severity: 'MEDIUM', area: 'Port Louis North', reports: 4 },
+  { id: 1, type: 'pothole', lat: -20.1609, lng: 57.4992, severity: 'HIGH', area: 'Port Louis', reports: 12 },
+  { id: 2, type: 'flood', lat: -20.2368, lng: 57.5165, severity: 'MEDIUM', area: 'Quatre Bornes', reports: 8 },
+  { id: 3, type: 'accident', lat: -20.3484, lng: 57.5012, severity: 'HIGH', area: 'Rose Hill', reports: 5 },
+  { id: 4, type: 'pothole', lat: -20.0474, lng: 57.5816, severity: 'LOW', area: 'Triolet', reports: 3 },
+  { id: 5, type: 'roadblock', lat: -20.4637, lng: 57.4375, severity: 'MEDIUM', area: 'Mahebourg', reports: 6 },
+  { id: 6, type: 'pothole', lat: -20.2540, lng: 57.4760, severity: 'HIGH', area: 'Vacoas', reports: 15 },
+  { id: 7, type: 'flood', lat: -20.1020, lng: 57.5560, severity: 'HIGH', area: 'Flacq', reports: 10 },
 ];
 
-const HAZARD_ICONS = {
-  pothole: '🕳️', flood: '🌊', accident: '💥',
-  roadblock: '🚧', signal: '🚦', debris: '⚠️', default: '📍',
-};
-
-const HAZARD_COLORS = {
-  pothole: '#E74C3C', flood: '#3498DB', accident: '#FF6B35',
-  roadblock: '#F39C12', signal: '#9B59B6', debris: '#95A5A6', default: '#95A5A6',
-};
-
+const HAZARD_ICONS = { pothole: '🕳️', flood: '🌊', accident: '💥', roadblock: '🚧', signal: '🚦', default: '📍' };
+const HAZARD_COLORS = { pothole: '#E74C3C', flood: '#3498DB', accident: '#FF6B35', roadblock: '#F39C12', signal: '#9B59B6', default: '#95A5A6' };
 const SEVERITY_COLORS = { HIGH: '#E74C3C', MEDIUM: '#F39C12', LOW: '#2ECC71' };
 
-function getHazardRadius(type, severity) {
-  if (type === 'pothole') return 0;
-  if (type === 'accident') return severity === 'HIGH' ? 200 : 100;
-  if (type === 'flood') return severity === 'HIGH' ? 800 : 400;
-  return severity === 'HIGH' ? 500 : severity === 'MEDIUM' ? 300 : 150;
-}
-
-function isHazardOnRoute(hazard, origin, dest, bufferDeg = 0.03) {
-  if (!origin || !dest) return false;
-  const minLat = Math.min(origin.latitude, dest.latitude) - bufferDeg;
-  const maxLat = Math.max(origin.latitude, dest.latitude) + bufferDeg;
-  const minLng = Math.min(origin.longitude, dest.longitude) - bufferDeg;
-  const maxLng = Math.max(origin.longitude, dest.longitude) + bufferDeg;
-  const lat = hazard.latitude ?? hazard.lat;
-  const lng = hazard.longitude ?? hazard.lng;
-  return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng;
-}
-
-// Fetch actual route polyline from OSRM (free, no API key)
-async function fetchRoute(origin, dest) {
-  try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.routes && data.routes[0]) {
-      const coords = data.routes[0].geometry.coordinates.map(([lng, lat]) => ({
-        latitude: lat,
-        longitude: lng,
-      }));
-      return coords;
-    }
-  } catch (e) {
-    console.log('Route fetch failed, using straight line');
-  }
-  return null;
-}
+// Mauritius major places for stop search
+const MAURITIUS_PLACES = [
+  { name: 'Port Louis City Centre', lat: -20.1609, lng: 57.4992 },
+  { name: 'Grand Baie Beach', lat: -20.0133, lng: 57.5833 },
+  { name: 'Quatre Bornes', lat: -20.2651, lng: 57.4799 },
+  { name: 'Curepipe', lat: -20.3168, lng: 57.5259 },
+  { name: 'Rose Hill', lat: -20.2368, lng: 57.4592 },
+  { name: 'Vacoas', lat: -20.2977, lng: 57.4785 },
+  { name: 'Mahebourg', lat: -20.4037, lng: 57.7019 },
+  { name: 'Flacq', lat: -20.1977, lng: 57.7119 },
+  { name: 'Triolet', lat: -20.0474, lng: 57.5816 },
+  { name: 'Goodlands', lat: -20.0300, lng: 57.6500 },
+  { name: 'Souillac', lat: -20.5100, lng: 57.5200 },
+  { name: 'Flic en Flac Beach', lat: -20.3050, lng: 57.3620 },
+  { name: 'Blue Bay Beach', lat: -20.4500, lng: 57.7100 },
+  { name: 'Tamarin', lat: -20.3300, lng: 57.3750 },
+  { name: 'Trou aux Biches', lat: -20.0300, lng: 57.5400 },
+  { name: 'Pamplemousses', lat: -20.1000, lng: 57.5800 },
+  { name: 'Ebene Cybercity', lat: -20.2350, lng: 57.4960 },
+  { name: 'SSR Airport', lat: -20.4302, lng: 57.6836 },
+  { name: 'Caudan Waterfront', lat: -20.1580, lng: 57.4960 },
+  { name: 'La Preneuse', lat: -20.3300, lng: 57.3600 },
+  { name: 'Riviere du Rempart', lat: -20.1100, lng: 57.6600 },
+  { name: 'Belle Mare', lat: -20.1900, lng: 57.7800 },
+  { name: 'Trou d\'Eau Douce', lat: -20.2100, lng: 57.7900 },
+  { name: 'Le Morne', lat: -20.4500, lng: 57.3200 },
+];
 
 export default function MapScreen() {
   const [location, setLocation] = useState(null);
   const [hazards, setHazards] = useState(DEMO_HAZARDS);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('hazards');
   const [loading, setLoading] = useState(false);
-
-  const [tripMode, setTripMode] = useState(false);
-  const [destInput, setDestInput] = useState('');
-  const [destCoords, setDestCoords] = useState(null);
-  const [tripHazards, setTripHazards] = useState([]);
-  const [routeCoords, setRouteCoords] = useState(null);
-  const [showTripModal, setShowTripModal] = useState(false);
-  const [routeLoading, setRouteLoading] = useState(false);
   const mapRef = useRef(null);
+
+  // Route planner state
+  const [stops, setStops] = useState([]);
+  const [showRoutePlanner, setShowRoutePlanner] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [addingStopIndex, setAddingStopIndex] = useState(null);
+
+  // Layers
+  const [showTraffic, setShowTraffic] = useState(false);
+  const [showBlackSpots, setShowBlackSpots] = useState(false);
+  const [showSpeedZones, setShowSpeedZones] = useState(false);
+  const [showHazards, setShowHazards] = useState(true);
 
   useEffect(() => {
     getLocation();
@@ -105,107 +95,91 @@ export default function MapScreen() {
   const fetchHazards = async () => {
     setLoading(true);
     try {
-      const [hazardsRes, reportsRes] = await Promise.allSettled([
-        axios.get(`${API_URL}/api/hazards`),
-        axios.get(`${API_URL}/api/reports`),
-      ]);
-
-      const hazardData = hazardsRes.status === 'fulfilled' && hazardsRes.value.data?.length > 0
-        ? hazardsRes.value.data.map(h => ({ ...h, id: `hazard-${h.id}` })) : [];
-
-      const reportData = reportsRes.status === 'fulfilled' && reportsRes.value.data?.length > 0
-        ? reportsRes.value.data
-            .filter(r => r.latitude && r.longitude)
-            .map(r => ({ ...r, id: `report-${r.id}`, _isReport: true }))
-        : [];
-
-      const merged = [...DEMO_HAZARDS, ...hazardData, ...reportData];
-
-      // Deduplicate by id
-      const seen = new Set();
-      const deduped = merged.filter(h => {
-        if (seen.has(h.id)) return false;
-        seen.add(h.id);
-        return true;
-      });
-
-      setHazards(deduped);
+      const res = await axios.get(`${API_URL}/api/hazards`);
+      if (res.data && res.data.length > 0) setHazards(res.data);
     } catch (e) {
       console.log('Using demo hazards');
     }
     setLoading(false);
   };
 
-  const geocodeDestination = async () => {
-    if (!destInput.trim()) return;
-    Keyboard.dismiss();
-    setRouteLoading(true);
-
-    try {
-      // Search more broadly so user can pick from multiple results
-      const results = await Location.geocodeAsync(destInput + ', Mauritius');
-
-      if (results.length === 0) {
-        Alert.alert('Location not found', 'Try a more specific address in Mauritius.');
-        setRouteLoading(false);
-        return;
-      }
-
-      if (results.length === 1) {
-        // Only one result — go straight to it
-        await applyDestination(results[0]);
-      } else {
-        // Multiple results — let user pick
-        const options = results.slice(0, 5).map((r, i) => ({
-          text: `📍 ${r.street || ''} ${r.city || ''} ${r.region || ''}`.trim() || `Option ${i + 1}`,
-          onPress: () => applyDestination(r),
-        }));
-        options.push({ text: 'Cancel', style: 'cancel' });
-        Alert.alert('Select Location', 'Multiple results found — which one?', options);
-      }
-    } catch (e) {
-      Alert.alert('Error', 'Could not find that location.');
-    }
-    setRouteLoading(false);
+  // Search places
+  const searchPlaces = (text) => {
+    setSearchText(text);
+    if (text.length < 2) { setSearchResults([]); return; }
+    const results = MAURITIUS_PLACES.filter(p =>
+      p.name.toLowerCase().includes(text.toLowerCase())
+    );
+    setSearchResults(results);
   };
 
-  const applyDestination = async (result) => {
-    const dest = { latitude: result.latitude, longitude: result.longitude };
-    setDestCoords(dest);
+  // Add a stop to route
+  const addStop = (place) => {
+    const newStop = { ...place, id: Date.now() };
+    if (addingStopIndex !== null) {
+      const newStops = [...stops];
+      newStops[addingStopIndex] = newStop;
+      setStops(newStops);
+      setAddingStopIndex(null);
+    } else {
+      setStops(prev => [...prev, newStop]);
+    }
+    setSearchText('');
+    setSearchResults([]);
 
-    const route = location ? await fetchRoute(location, dest) : null;
-    setRouteCoords(route);
+    // Fly to location on map
+    mapRef.current?.animateToRegion({
+      latitude: place.lat,
+      longitude: place.lng,
+      latitudeDelta: 0.1,
+      longitudeDelta: 0.1,
+    }, 800);
+  };
 
-    const onRoute = hazards.filter(h => isHazardOnRoute(h, location, dest));
-    setTripHazards(onRoute);
-    setTripMode(true);
-    setShowTripModal(false);
+  const removeStop = (index) => {
+    setStops(stops.filter((_, i) => i !== index));
+  };
 
-    if (mapRef.current && location) {
-      const points = route || [
-        { latitude: location.latitude, longitude: location.longitude },
-        dest,
-      ];
-      mapRef.current.fitToCoordinates(points, {
-        edgePadding: { top: 80, right: 40, bottom: 120, left: 40 },
-        animated: true,
+  const moveStopUp = (index) => {
+    if (index === 0) return;
+    const newStops = [...stops];
+    [newStops[index - 1], newStops[index]] = [newStops[index], newStops[index - 1]];
+    setStops(newStops);
+  };
+
+  // Build route polyline from stops + current location
+  const getRouteCoords = () => {
+    const points = [];
+    if (location) points.push({ latitude: location.latitude, longitude: location.longitude });
+    stops.forEach(s => points.push({ latitude: s.lat, longitude: s.lng }));
+    return points;
+  };
+
+  // Check hazards along route
+  const getRouteWarnings = () => {
+    if (stops.length === 0) return [];
+    const warnings = [];
+    ACCIDENT_BLACK_SPOTS.filter(b => b.severity === 'HIGH').forEach(spot => {
+      stops.forEach(stop => {
+        const dist = Math.sqrt((spot.lat - stop.lat) ** 2 + (spot.lng - stop.lng) ** 2);
+        if (dist < 0.05) warnings.push(`⚠️ ${spot.name} is a known accident black spot near ${stop.name}`);
       });
-    }
+    });
+    return warnings;
   };
 
-  const cancelTrip = () => {
-    setTripMode(false);
-    setDestCoords(null);
-    setDestInput('');
-    setTripHazards([]);
-    setRouteCoords(null);
+  const fitMapToRoute = () => {
+    if (stops.length === 0) return;
+    const allCoords = getRouteCoords();
+    if (allCoords.length < 2) return;
+    mapRef.current?.fitToCoordinates(allCoords, {
+      edgePadding: { top: 80, right: 40, bottom: 200, left: 40 },
+      animated: true,
+    });
   };
 
-  const activeHazards = tripMode
-    ? tripHazards
-    : (filter === 'all' ? hazards : hazards.filter(h => h.type === filter));
-
-  const filterButtons = ['all', 'pothole', 'flood', 'accident', 'roadblock'];
+  const routeWarnings = getRouteWarnings();
+  const routeCoords = getRouteCoords();
 
   return (
     <View style={styles.container}>
@@ -213,199 +187,283 @@ export default function MapScreen() {
         ref={mapRef}
         style={styles.map}
         initialRegion={{
-          latitude: -20.2744,
-          longitude: 57.5512,
-          latitudeDelta: 0.8,
-          longitudeDelta: 0.8,
+          latitude: -20.2744, longitude: 57.5512,
+          latitudeDelta: 0.8, longitudeDelta: 0.8,
         }}
         showsUserLocation={true}
         showsMyLocationButton={true}
       >
-        {/* Hazard circles — non-pothole types only */}
-        {activeHazards.map((hazard) => {
-          const lat = hazard.latitude ?? hazard.lat;
-          const lng = hazard.longitude ?? hazard.lng;
-          const radius = getHazardRadius(hazard.type, hazard.severity);
-          if (!radius || !lat || !lng) return null;
-          return (
+        {/* ── LAYER 1: Road Hazards ── */}
+        {showHazards && hazards.map((hazard) => (
+          <React.Fragment key={hazard.id}>
             <Circle
-              key={`circle-${hazard.id}`}
-              center={{ latitude: lat, longitude: lng }}
-              radius={radius}
-              strokeColor={SEVERITY_COLORS[hazard.severity] + '80'}
-              fillColor={SEVERITY_COLORS[hazard.severity] + '25'}
+              center={{ latitude: hazard.lat || hazard.latitude, longitude: hazard.lng || hazard.longitude }}
+              radius={hazard.severity === 'HIGH' ? 800 : 500}
+              strokeColor={SEVERITY_COLORS[hazard.severity] + '60'}
+              fillColor={SEVERITY_COLORS[hazard.severity] + '20'}
             />
-          );
-        })}
-
-        {/* Hazard markers */}
-        {activeHazards.map((hazard) => {
-          const lat = hazard.latitude ?? hazard.lat;
-          const lng = hazard.longitude ?? hazard.lng;
-          if (!lat || !lng) return null;
-          return (
-            <Marker
-              key={`marker-${hazard.id}`}
-              coordinate={{ latitude: lat, longitude: lng }}
-              anchor={{ x: 0.5, y: 0.5 }}
-            >
-              <View style={[
-                styles.markerPin,
-                { backgroundColor: HAZARD_COLORS[hazard.type] || '#95A5A6' },
-                hazard._isReport && styles.reportMarkerBorder,
-              ]}>
-                <Text style={styles.markerEmoji}>
-                  {HAZARD_ICONS[hazard.type] || HAZARD_ICONS.default}
-                </Text>
-                {hazard._isReport && (
-                  <View style={styles.reportBadge}>
-                    <Text style={styles.reportBadgeText}>!</Text>
-                  </View>
-                )}
+            <Marker coordinate={{ latitude: hazard.lat || hazard.latitude, longitude: hazard.lng || hazard.longitude }}>
+              <View style={[styles.markerPin, { backgroundColor: HAZARD_COLORS[hazard.type] || '#95A5A6' }]}>
+                <Text style={styles.markerEmoji}>{HAZARD_ICONS[hazard.type] || '📍'}</Text>
               </View>
               <Callout style={styles.callout}>
-                <Text style={styles.calloutTitle}>
-                  {HAZARD_ICONS[hazard.type]} {hazard.type?.toUpperCase()}
-                  {hazard._isReport ? ' (Reported)' : ''}
-                </Text>
-                {hazard.area ? <Text style={styles.calloutArea}>📍 {hazard.area}</Text> : null}
-                <Text style={[styles.calloutSeverity, { color: SEVERITY_COLORS[hazard.severity] }]}>
-                  ⚡ {hazard.severity}
-                </Text>
-                {hazard.description ? (
-                  <Text style={styles.calloutDesc}>{hazard.description}</Text>
-                ) : null}
-                <Text style={styles.calloutReports}>👥 {hazard.reports || 1} report(s)</Text>
-                <Text style={styles.calloutCoords}>
-                  {Number(lat).toFixed(5)}, {Number(lng).toFixed(5)}
-                </Text>
+                <Text style={styles.calloutTitle}>{HAZARD_ICONS[hazard.type]} {hazard.type?.toUpperCase()}</Text>
+                <Text style={styles.calloutArea}>📍 {hazard.area}</Text>
+                <Text style={[styles.calloutSev, { color: SEVERITY_COLORS[hazard.severity] }]}>⚡ {hazard.severity}</Text>
+                <Text style={styles.calloutSub}>👥 {hazard.reports} reports</Text>
               </Callout>
             </Marker>
+          </React.Fragment>
+        ))}
+
+        {/* ── LAYER 2: Traffic congestion (colored circles at key roads) ── */}
+        {showTraffic && TRAFFIC_SEGMENTS.map(seg => {
+          const color = getTrafficColor(seg.avgSpeed, seg.freeFlowSpeed);
+          return (
+            <React.Fragment key={seg.id}>
+              <Polyline
+                coordinates={[
+                  { latitude: seg.startLat, longitude: seg.startLng },
+                  { latitude: seg.endLat, longitude: seg.endLng },
+                ]}
+                strokeColor={color}
+                strokeWidth={6}
+                lineDashPattern={seg.congestion === 'free' ? undefined : [1]}
+              />
+              <Marker coordinate={{ latitude: (seg.startLat + seg.endLat) / 2, longitude: (seg.startLng + seg.endLng) / 2 }}>
+                <View style={[styles.trafficBadge, { backgroundColor: color }]}>
+                  <Text style={styles.trafficText}>{seg.avgSpeed}km/h</Text>
+                </View>
+                <Callout style={styles.callout}>
+                  <Text style={styles.calloutTitle}>🚦 {seg.name}</Text>
+                  <Text style={styles.calloutArea}>Current: {seg.avgSpeed} km/h</Text>
+                  <Text style={styles.calloutArea}>Normal: {seg.freeFlowSpeed} km/h</Text>
+                  <Text style={[styles.calloutSev, { color }]}>Status: {seg.congestion.toUpperCase()}</Text>
+                  <Text style={styles.calloutSub}>Based on crowdsourced data</Text>
+                </Callout>
+              </Marker>
+            </React.Fragment>
           );
         })}
 
-        {/* Destination marker */}
-        {tripMode && destCoords && (
-          <Marker coordinate={destCoords} anchor={{ x: 0.5, y: 0.5 }}>
-            <View style={styles.destMarker}>
-              <Text style={styles.destMarkerText}>🏁</Text>
+        {/* ── LAYER 3: Accident Black Spots Heatmap ── */}
+        {showBlackSpots && ACCIDENT_BLACK_SPOTS.map(spot => (
+          <React.Fragment key={spot.id}>
+            <Circle
+              center={{ latitude: spot.lat, longitude: spot.lng }}
+              radius={spot.severity === 'HIGH' ? 1200 : 800}
+              strokeColor={spot.severity === 'HIGH' ? '#E74C3C80' : '#F39C1280'}
+              fillColor={spot.severity === 'HIGH' ? '#E74C3C30' : '#F39C1220'}
+            />
+            <Marker coordinate={{ latitude: spot.lat, longitude: spot.lng }}>
+              <View style={[styles.blackSpotMarker, { backgroundColor: spot.severity === 'HIGH' ? '#E74C3C' : '#F39C12' }]}>
+                <Text style={styles.markerEmoji}>💀</Text>
+              </View>
+              <Callout style={styles.callout}>
+                <Text style={styles.calloutTitle}>🔴 ACCIDENT BLACK SPOT</Text>
+                <Text style={styles.calloutArea}>📍 {spot.name}</Text>
+                <Text style={[styles.calloutSev, { color: SEVERITY_COLORS[spot.severity] }]}>⚡ {spot.severity} RISK</Text>
+                <Text style={styles.calloutSub}>📊 {spot.accidents} recorded accidents</Text>
+                <Text style={styles.calloutSub}>ℹ️ {spot.description}</Text>
+              </Callout>
+            </Marker>
+          </React.Fragment>
+        ))}
+
+        {/* ── LAYER 4: Speed Zones ── */}
+        {showSpeedZones && SPEED_ZONES.map(zone => {
+          const color = zone.type === 'highway' ? '#3498DB' : zone.type === 'main' ? '#F39C12' : '#E74C3C';
+          return (
+            <React.Fragment key={zone.id}>
+              <Circle
+                center={{ latitude: zone.lat, longitude: zone.lng }}
+                radius={zone.type === 'highway' ? 2000 : zone.type === 'main' ? 1200 : 600}
+                strokeColor={color + '60'}
+                fillColor={color + '15'}
+              />
+              <Marker coordinate={{ latitude: zone.lat, longitude: zone.lng }}>
+                <View style={[styles.speedBadge, { backgroundColor: color }]}>
+                  <Text style={styles.speedBadgeText}>{zone.limit}</Text>
+                  <Text style={styles.speedBadgeUnit}>km/h</Text>
+                </View>
+              </Marker>
+            </React.Fragment>
+          );
+        })}
+
+        {/* ── Route stops ── */}
+        {stops.map((stop, index) => (
+          <Marker
+            key={stop.id}
+            coordinate={{ latitude: stop.lat, longitude: stop.lng }}
+          >
+            <View style={styles.stopMarker}>
+              <Text style={styles.stopMarkerText}>{index + 1}</Text>
             </View>
+            <Callout>
+              <Text style={styles.calloutTitle}>Stop {index + 1}</Text>
+              <Text style={styles.calloutArea}>{stop.name}</Text>
+            </Callout>
           </Marker>
+        ))}
+
+        {/* Route line */}
+        {routeCoords.length >= 2 && (
+          <Polyline
+            coordinates={routeCoords}
+            strokeColor="#3498DB"
+            strokeWidth={3}
+            lineDashPattern={[8, 4]}
+          />
         )}
 
-        {/* Real road route OR fallback dashed line */}
-        {tripMode && destCoords && location && (
-          <Polyline
-            coordinates={routeCoords || [
-              { latitude: location.latitude, longitude: location.longitude },
-              destCoords,
-            ]}
-            strokeColor="#3498DB"
-            strokeWidth={4}
-            lineDashPattern={routeCoords ? undefined : [8, 4]}
+        {/* User location */}
+        {location && (
+          <Circle
+            center={{ latitude: location.latitude, longitude: location.longitude }}
+            radius={200}
+            strokeColor="rgba(52,152,219,0.6)"
+            fillColor="rgba(52,152,219,0.15)"
           />
         )}
       </MapView>
 
-      {/* Top bar */}
-      {!tripMode ? (
-        <View style={styles.filterContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-            {filterButtons.map((f) => (
-              <TouchableOpacity
-                key={f}
-                style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
-                onPress={() => setFilter(f)}
-              >
-                <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                  {HAZARD_ICONS[f] || '🗺️'} {f.charAt(0).toUpperCase() + f.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      ) : (
-        <View style={styles.tripBanner}>
-          <Text style={styles.tripBannerText} numberOfLines={1}>
-            🗺️ <Text style={{ color: '#2ECC71' }}>{destInput}</Text>
-            {'  '}⚠️ {tripHazards.length} hazard(s)
-          </Text>
-          <TouchableOpacity style={styles.cancelTripBtn} onPress={cancelTrip}>
-            <Text style={styles.cancelTripText}>✕ Cancel</Text>
+      {/* ── Top Layer Toggle Bar ── */}
+      <View style={styles.layerBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.layerScroll}>
+          <TouchableOpacity style={[styles.layerBtn, showHazards && styles.layerBtnOn]} onPress={() => setShowHazards(!showHazards)}>
+            <Text style={[styles.layerText, showHazards && styles.layerTextOn]}>🕳️ Hazards</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.layerBtn, showTraffic && styles.layerBtnTraffic]} onPress={() => setShowTraffic(!showTraffic)}>
+            <Text style={[styles.layerText, showTraffic && styles.layerTextOn]}>🚦 Traffic</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.layerBtn, showBlackSpots && styles.layerBtnDanger]} onPress={() => setShowBlackSpots(!showBlackSpots)}>
+            <Text style={[styles.layerText, showBlackSpots && styles.layerTextOn]}>💀 Black Spots</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.layerBtn, showSpeedZones && styles.layerBtnSpeed]} onPress={() => setShowSpeedZones(!showSpeedZones)}>
+            <Text style={[styles.layerText, showSpeedZones && styles.layerTextOn]}>⚡ Speed Zones</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.layerBtn, showRoutePlanner && styles.layerBtnRoute]} onPress={() => setShowRoutePlanner(!showRoutePlanner)}>
+            <Text style={[styles.layerText, showRoutePlanner && styles.layerTextOn]}>🗺️ Route</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+
+      {/* ── Route Planner Panel ── */}
+      {showRoutePlanner && (
+        <View style={styles.routePanel}>
+          <View style={styles.routePanelHeader}>
+            <Text style={styles.routePanelTitle}>🗺️ Route Planner</Text>
+            {stops.length >= 2 && (
+              <TouchableOpacity style={styles.fitBtn} onPress={fitMapToRoute}>
+                <Text style={styles.fitBtnText}>Fit map ↗</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Search box */}
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search a place in Mauritius..."
+            placeholderTextColor="#7f8c8d"
+            value={searchText}
+            onChangeText={searchPlaces}
+          />
+
+          {/* Search results */}
+          {searchResults.length > 0 && (
+            <View style={styles.searchResults}>
+              {searchResults.slice(0, 5).map((place, i) => (
+                <TouchableOpacity key={i} style={styles.searchResult} onPress={() => addStop(place)}>
+                  <Text style={styles.searchResultIcon}>📍</Text>
+                  <Text style={styles.searchResultText}>{place.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Current location as start */}
+          {location && (
+            <View style={styles.stopRow}>
+              <View style={[styles.stopDot, { backgroundColor: '#2ECC71' }]} />
+              <Text style={styles.stopRowText}>📍 Your current location</Text>
+            </View>
+          )}
+
+          {/* Stops list */}
+          {stops.map((stop, index) => (
+            <View key={stop.id} style={styles.stopRow}>
+              <View style={[styles.stopDot, { backgroundColor: '#3498DB' }]}>
+                <Text style={styles.stopDotNum}>{index + 1}</Text>
+              </View>
+              <Text style={styles.stopRowText} numberOfLines={1}>{stop.name}</Text>
+              <View style={styles.stopActions}>
+                {index > 0 && (
+                  <TouchableOpacity onPress={() => moveStopUp(index)} style={styles.stopBtn}>
+                    <Text style={styles.stopBtnText}>↑</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => removeStop(index)} style={[styles.stopBtn, { backgroundColor: '#E74C3C20' }]}>
+                  <Text style={[styles.stopBtnText, { color: '#E74C3C' }]}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+
+          {stops.length === 0 && (
+            <Text style={styles.emptyRoute}>Search a place above to add your first stop</Text>
+          )}
+
+          {/* Route warnings */}
+          {routeWarnings.length > 0 && (
+            <View style={styles.warningBox}>
+              <Text style={styles.warningTitle}>⚠️ Route Warnings</Text>
+              {routeWarnings.map((w, i) => (
+                <Text key={i} style={styles.warningText}>{w}</Text>
+              ))}
+            </View>
+          )}
+
+          {stops.length > 0 && routeWarnings.length === 0 && (
+            <View style={[styles.warningBox, { borderColor: '#2ECC71' }]}>
+              <Text style={[styles.warningTitle, { color: '#2ECC71' }]}>✅ No major black spots on route</Text>
+            </View>
+          )}
         </View>
       )}
 
-      {/* Stats Bar */}
-      <View style={styles.statsBar}>
-        <View style={styles.statItem}>
-          <Text style={styles.statNum}>{activeHazards.length}</Text>
-          <Text style={styles.statLbl}>{tripMode ? 'On Route' : 'Hazards'}</Text>
+      {/* ── Traffic Legend ── */}
+      {showTraffic && (
+        <View style={styles.legend}>
+          <Text style={styles.legendTitle}>Traffic</Text>
+          <View style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: '#2ECC71' }]} /><Text style={styles.legendText}>Free flow</Text></View>
+          <View style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: '#F39C12' }]} /><Text style={styles.legendText}>Moderate</Text></View>
+          <View style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: '#E74C3C' }]} /><Text style={styles.legendText}>Heavy/Stop</Text></View>
         </View>
-        <View style={styles.statItem}>
-          <Text style={[styles.statNum, { color: '#E74C3C' }]}>
-            {activeHazards.filter(h => h.severity === 'HIGH').length}
-          </Text>
-          <Text style={styles.statLbl}>High Risk</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statNum}>
-            {activeHazards.reduce((s, h) => s + (h.reports || 1), 0)}
-          </Text>
-          <Text style={styles.statLbl}>Reports</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.tripBtn}
-          onPress={() => { if (tripMode) { cancelTrip(); } else { setShowTripModal(true); } }}
-        >
-          <Text style={styles.tripBtnText}>{tripMode ? '🗺️ Clear' : '🗺️ Trip'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.refreshBtn} onPress={fetchHazards}>
-          <Text style={styles.refreshText}>{loading ? '⏳' : '🔄'}</Text>
-        </TouchableOpacity>
-      </View>
+      )}
 
-      {/* Trip Planner Modal */}
-      <Modal visible={showTripModal} transparent animationType="slide" onRequestClose={() => setShowTripModal(false)}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalOverlay}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-              style={styles.modalKAV}
-            >
-              <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>🗺️ Plan Your Trip</Text>
-                <Text style={styles.modalSubtitle}>
-                  Enter your destination to see hazards on your route
-                </Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={destInput}
-                  onChangeText={setDestInput}
-                  placeholder="e.g. Grand Baie, Curepipe, Port Louis..."
-                  placeholderTextColor="#7f8c8d"
-                  returnKeyType="search"
-                  onSubmitEditing={geocodeDestination}
-                  blurOnSubmit={false}
-                />
-                <TouchableOpacity
-                  style={[styles.modalGoBtn, routeLoading && { opacity: 0.6 }]}
-                  onPress={geocodeDestination}
-                  disabled={routeLoading}
-                >
-                  {routeLoading
-                    ? <ActivityIndicator color="#fff" />
-                    : <Text style={styles.modalGoBtnText}>🔍 Show Route Hazards</Text>
-                  }
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalCancelBtn} onPress={() => { Keyboard.dismiss(); setShowTripModal(false); }}>
-                  <Text style={styles.modalCancelText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </KeyboardAvoidingView>
+      {/* ── Stats Bar ── */}
+      {!showRoutePlanner && (
+        <View style={styles.statsBar}>
+          <View style={styles.statItem}>
+            <Text style={styles.statNum}>{hazards.length}</Text>
+            <Text style={styles.statLbl}>Hazards</Text>
           </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+          <View style={styles.statItem}>
+            <Text style={[styles.statNum, { color: '#E74C3C' }]}>
+              {ACCIDENT_BLACK_SPOTS.filter(b => b.severity === 'HIGH').length}
+            </Text>
+            <Text style={styles.statLbl}>Black Spots</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statNum}>{TRAFFIC_SEGMENTS.filter(t => t.congestion === 'heavy' || t.congestion === 'standstill').length}</Text>
+            <Text style={styles.statLbl}>Congested</Text>
+          </View>
+          <TouchableOpacity style={styles.refreshBtn} onPress={fetchHazards}>
+            <Text style={styles.refreshText}>{loading ? '⏳' : '🔄'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -414,100 +472,96 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
 
-  filterContainer: { position: 'absolute', top: 10, left: 0, right: 0 },
-  filterScroll: { paddingHorizontal: 10, gap: 6 },
-  filterBtn: {
-    backgroundColor: 'rgba(26,26,46,0.92)',
-    paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 20, borderWidth: 1, borderColor: '#2d2d4e',
+  layerBar: { position: 'absolute', top: 10, left: 0, right: 0 },
+  layerScroll: { paddingHorizontal: 10, gap: 6 },
+  layerBtn: {
+    backgroundColor: 'rgba(26,26,46,0.92)', paddingHorizontal: 12,
+    paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#2d2d4e',
   },
-  filterBtnActive: { backgroundColor: '#E74C3C', borderColor: '#E74C3C' },
-  filterText: { color: '#bdc3c7', fontSize: 12, fontWeight: '600' },
-  filterTextActive: { color: '#fff' },
+  layerBtnOn: { backgroundColor: '#E74C3C', borderColor: '#E74C3C' },
+  layerBtnTraffic: { backgroundColor: '#27AE60', borderColor: '#27AE60' },
+  layerBtnDanger: { backgroundColor: '#C0392B', borderColor: '#C0392B' },
+  layerBtnSpeed: { backgroundColor: '#2980B9', borderColor: '#2980B9' },
+  layerBtnRoute: { backgroundColor: '#8E44AD', borderColor: '#8E44AD' },
+  layerText: { color: '#bdc3c7', fontSize: 12, fontWeight: '600' },
+  layerTextOn: { color: '#fff' },
 
-  tripBanner: {
-    position: 'absolute', top: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(13,13,26,0.96)',
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: '#3498DB',
+  routePanel: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(13,13,26,0.97)', borderTopWidth: 1,
+    borderTopColor: '#2d2d4e', padding: 14, maxHeight: '55%',
   },
-  tripBannerText: { flex: 1, color: '#ecf0f1', fontSize: 13 },
-  cancelTripBtn: {
-    backgroundColor: '#E74C3C', borderRadius: 14,
-    paddingHorizontal: 12, paddingVertical: 6,
+  routePanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  routePanelTitle: { color: '#ecf0f1', fontSize: 15, fontWeight: '700' },
+  fitBtn: { backgroundColor: '#3498DB20', padding: 6, borderRadius: 8 },
+  fitBtnText: { color: '#3498DB', fontSize: 12, fontWeight: '600' },
+  searchInput: {
+    backgroundColor: '#1a1a2e', color: '#ecf0f1', borderRadius: 10,
+    padding: 10, fontSize: 14, borderWidth: 1, borderColor: '#2d2d4e', marginBottom: 8,
   },
-  cancelTripText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  searchResults: { backgroundColor: '#1a1a2e', borderRadius: 10, borderWidth: 1, borderColor: '#2d2d4e', marginBottom: 8 },
+  searchResult: { flexDirection: 'row', alignItems: 'center', padding: 10, borderBottomWidth: 1, borderBottomColor: '#2d2d4e' },
+  searchResultIcon: { fontSize: 16, marginRight: 8 },
+  searchResultText: { color: '#ecf0f1', fontSize: 13 },
+
+  stopRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: '#2d2d4e',
+  },
+  stopDot: {
+    width: 24, height: 24, borderRadius: 12,
+    justifyContent: 'center', alignItems: 'center', marginRight: 10, flexShrink: 0,
+  },
+  stopDotNum: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  stopRowText: { color: '#ecf0f1', fontSize: 13, flex: 1 },
+  stopActions: { flexDirection: 'row', gap: 6 },
+  stopBtn: {
+    backgroundColor: '#1a1a2e', width: 28, height: 28,
+    borderRadius: 6, justifyContent: 'center', alignItems: 'center',
+  },
+  stopBtnText: { color: '#bdc3c7', fontSize: 14, fontWeight: '700' },
+  emptyRoute: { color: '#7f8c8d', fontSize: 13, textAlign: 'center', padding: 12 },
+  warningBox: {
+    marginTop: 8, padding: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: '#E74C3C', backgroundColor: '#E74C3C10',
+  },
+  warningTitle: { color: '#E74C3C', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  warningText: { color: '#bdc3c7', fontSize: 12, marginBottom: 2 },
+
+  legend: {
+    position: 'absolute', right: 10, top: 60,
+    backgroundColor: 'rgba(13,13,26,0.92)', padding: 10,
+    borderRadius: 10, borderWidth: 1, borderColor: '#2d2d4e',
+  },
+  legendTitle: { color: '#ecf0f1', fontSize: 11, fontWeight: '700', marginBottom: 6 },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  legendDot: { width: 12, height: 12, borderRadius: 6 },
+  legendText: { color: '#bdc3c7', fontSize: 11 },
 
   statsBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(13,13,26,0.95)',
-    flexDirection: 'row', padding: 12, alignItems: 'center',
-    borderTopWidth: 1, borderTopColor: '#2d2d4e',
+    backgroundColor: 'rgba(13,13,26,0.95)', flexDirection: 'row',
+    padding: 12, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#2d2d4e',
   },
   statItem: { flex: 1, alignItems: 'center' },
   statNum: { fontSize: 20, fontWeight: 'bold', color: '#3498DB' },
   statLbl: { fontSize: 10, color: '#7f8c8d', marginTop: 2 },
   refreshBtn: { padding: 8 },
   refreshText: { fontSize: 20 },
-  tripBtn: {
-    backgroundColor: '#1a1a2e', borderRadius: 12,
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderWidth: 1, borderColor: '#3498DB', marginRight: 4,
-  },
-  tripBtnText: { color: '#3498DB', fontSize: 12, fontWeight: '700' },
 
-  markerPin: {
-    width: 36, height: 36, borderRadius: 18,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: '#fff',
-  },
-  reportMarkerBorder: { borderColor: '#FFD700', borderWidth: 3 },
-  reportBadge: {
-    position: 'absolute', top: -4, right: -4,
-    backgroundColor: '#FFD700', borderRadius: 8,
-    width: 16, height: 16, justifyContent: 'center', alignItems: 'center',
-  },
-  reportBadgeText: { fontSize: 10, fontWeight: 'bold', color: '#000' },
-  markerEmoji: { fontSize: 18 },
-
-  destMarker: {
-    backgroundColor: '#1a1a2e', borderRadius: 20,
-    padding: 6, borderWidth: 2, borderColor: '#2ECC71',
-  },
-  destMarkerText: { fontSize: 20 },
-
-  callout: { width: 180, padding: 8 },
+  markerPin: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  markerEmoji: { fontSize: 16 },
+  blackSpotMarker: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  trafficBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#fff' },
+  trafficText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  speedBadge: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  speedBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  speedBadgeUnit: { color: '#ffffffaa', fontSize: 7 },
+  stopMarker: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#3498DB', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  stopMarkerText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  callout: { width: 200, padding: 8 },
   calloutTitle: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50', marginBottom: 4 },
   calloutArea: { fontSize: 12, color: '#555', marginBottom: 2 },
-  calloutSeverity: { fontSize: 12, fontWeight: '600', marginBottom: 2 },
-  calloutDesc: { fontSize: 11, color: '#444', marginBottom: 2, fontStyle: 'italic' },
-  calloutReports: { fontSize: 11, color: '#888' },
-  calloutCoords: { fontSize: 10, color: '#aaa', marginTop: 2, fontFamily: 'monospace' },
-
-  modalOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-  },
-  modalKAV: { justifyContent: 'flex-end' },
-  modalCard: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 24, paddingBottom: 36,
-    borderTopWidth: 1, borderTopColor: '#3498DB',
-  },
-  modalTitle: { color: '#ecf0f1', fontSize: 20, fontWeight: 'bold', marginBottom: 6 },
-  modalSubtitle: { color: '#7f8c8d', fontSize: 13, marginBottom: 16 },
-  modalInput: {
-    backgroundColor: '#0d0d1a', color: '#ecf0f1',
-    borderRadius: 10, padding: 14, borderWidth: 1, borderColor: '#2d2d4e',
-    fontSize: 15, marginBottom: 12,
-  },
-  modalGoBtn: {
-    backgroundColor: '#3498DB', borderRadius: 12,
-    padding: 16, alignItems: 'center', marginBottom: 10,
-  },
-  modalGoBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
-  modalCancelBtn: { padding: 12, alignItems: 'center' },
-  modalCancelText: { color: '#7f8c8d', fontSize: 14 },
+  calloutSev: { fontSize: 12, fontWeight: '600', marginBottom: 2 },
+  calloutSub: { fontSize: 11, color: '#888' },
 });
