@@ -1,24 +1,49 @@
 {
   "expo": {
-    "name": "app",
-    "slug": "app",
+    "name": "RoadSafe Mauritius",
+    "slug": "roadsafe-mauritius",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0d0d1a"
     },
+    "permissions": [
+      "LOCATION",
+      "CAMERA",
+      "RECORD_AUDIO",
+      "VIBRATE",
+      "ACCESS_FINE_LOCATION",
+      "ACCESS_COARSE_LOCATION",
+      "ACCESS_BACKGROUND_LOCATION"
+    ],
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0d0d1a"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "VIBRATE"
+      ]
+    },
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "RoadSafe needs location to detect and map road hazards near you",
+        "NSLocationAlwaysUsageDescription": "RoadSafe needs background location to detect hazards while driving",
+        "NSCameraUsageDescription": "RoadSafe uses camera to photograph road hazards for reporting",
+        "NSMicrophoneUsageDescription": "RoadSafe uses microphone for crash sound detection"
       }
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      "expo-location",
+      "expo-camera"
+    ]
   }
 }
