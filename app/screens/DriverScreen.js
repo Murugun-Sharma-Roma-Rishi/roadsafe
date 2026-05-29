@@ -10,7 +10,7 @@ import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import config from '../config';
-
+import { getSpeedLimitForLocation } from '../data/mauritiusData';
 const API_URL = config.API_URL;
 
 const HARSH_BRAKE_THRESHOLD = 1.5;
@@ -18,7 +18,7 @@ const HARSH_ACCEL_THRESHOLD = 1.8;
 const SWERVE_THRESHOLD = 1.6;
 const CRASH_THRESHOLD = 3.5;
 const POTHOLE_THRESHOLD = 2.2; // vertical spike = pothole
-const SPEED_LIMIT = 60;
+// const SPEED_LIMIT = 60;
 const SOS_COUNTDOWN_SECONDS = 10;
 const SOS_COOLDOWN_MS = 30000; // 30s between SOS triggers
 
@@ -27,6 +27,7 @@ export default function DriverScreen() {
   const [isTracking, setIsTracking] = useState(false);
   const [events, setEvents] = useState([]);
   const [speed, setSpeed] = useState(0);
+  const [currentZone, setCurrentZone] = useState({ limit: 60, name: 'General road', type: 'general' });
   const [maxSpeed, setMaxSpeed] = useState(0);
   const [distance, setDistance] = useState(0);
   const [tripTime, setTripTime] = useState(0);
@@ -111,11 +112,14 @@ export default function DriverScreen() {
         const spd = loc.coords.speed ? Math.max(0, loc.coords.speed * 3.6) : 0;
         setSpeed(Math.round(spd));
         setMaxSpeed(m => Math.max(m, Math.round(spd)));
-        locationRef.current = loc.coords;
+        // locationRef.current = loc.coords;
+        // Get real Mauritius speed limit for current location
+        const zone = getSpeedLimitForLocation(loc.coords.latitude, loc.coords.longitude);
+        setCurrentZone(zone);
 
-        if (spd > SPEED_LIMIT) {
+        if (spd > zone.limit) {
           setStats(s => ({ ...s, speedingEvents: s.speedingEvents + 1 }));
-          deductScore(3, '🚨 Speeding detected');
+          deductScore(3, `🚨 Speeding in ${zone.name} (limit: ${zone.limit} km/h)`);
         }
 
         if (lastLocation.current) {
@@ -332,12 +336,21 @@ export default function DriverScreen() {
 
         {/* Live Speed */}
         <View style={styles.speedCard}>
-          <Text style={[styles.speedNum, { color: speed > SPEED_LIMIT ? '#E74C3C' : '#2ECC71' }]}>
+          <Text style={[styles.speedNum, { color: speed > currentZone.limit ? '#E74C3C' : '#2ECC71' }]}>
             {speed}
           </Text>
           <Text style={styles.speedUnit}>km/h</Text>
-          {speed > SPEED_LIMIT && (
-            <Text style={styles.speedWarning}>⚠️ Over speed limit ({SPEED_LIMIT} km/h)</Text>
+          <View style={styles.limitRow}>
+            <Text style={styles.limitLabel}>Speed limit:</Text>
+            <Text style={[styles.limitValue, { color: speed > currentZone.limit ? '#E74C3C' : '#bdc3c7' }]}>
+              {currentZone.limit} km/h
+            </Text>
+          </View>
+          <Text style={styles.zoneName}>{currentZone.name}</Text>
+          {speed > currentZone.limit && (
+            <Text style={styles.speedWarning}>
+              🚨 OVER LIMIT by {Math.round(speed - currentZone.limit)} km/h!
+            </Text>
           )}
         </View>
 
@@ -648,6 +661,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E74C3C', borderRadius: 12,
     padding: 16, alignItems: 'center', marginBottom: 10,
   },
+  limitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  limitLabel: { color: '#7f8c8d', fontSize: 13 },
+  limitValue: { fontSize: 14, fontWeight: '700' },
+  zoneName: { color: '#7f8c8d', fontSize: 11, marginTop: 2 },
   modalGoBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
   modalCancelBtn: { padding: 12, alignItems: 'center' },
   modalCancelText: { color: '#7f8c8d', fontSize: 14 },
