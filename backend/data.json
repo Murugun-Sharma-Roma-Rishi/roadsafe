@@ -86,6 +86,90 @@
       "anonymous": true,
       "reportCount": 1,
       "createdAt": "2026-05-29T08:53:53.705Z"
+    },
+    {
+      "id": "f317e0b0-52fa-4fd8-aaec-bef9f25a343b",
+      "type": "pothole",
+      "severity": "HIGH",
+      "latitude": -20.110335192481656,
+      "longitude": 57.58439925695348,
+      "magnitude": "3.728",
+      "timestamp": "2026-05-29T13:05:03.429Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:05:03.949Z"
+    },
+    {
+      "id": "bbc488d8-245c-439b-857a-43b72c9e8c46",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110335192481656,
+      "longitude": 57.58439925695348,
+      "magnitude": "1.809",
+      "timestamp": "2026-05-29T13:05:22.121Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:05:22.614Z"
+    },
+    {
+      "id": "62aafd38-8864-4209-9d5d-b141849bc16c",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.110335192481656,
+      "longitude": 57.58439925695348,
+      "magnitude": "2.254",
+      "timestamp": "2026-05-29T13:05:26.520Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:05:27.015Z"
+    },
+    {
+      "id": "7eab49da-8c81-4fc8-aa14-7294c0b67eac",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.11033519949353,
+      "longitude": 57.58440058925222,
+      "magnitude": "2.015",
+      "timestamp": "2026-05-29T13:08:19.196Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:08:19.722Z"
+    },
+    {
+      "id": "05a89515-2386-46af-b68e-06fb5edcbda8",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.11033519553192,
+      "longitude": 57.584399836521776,
+      "magnitude": "2.119",
+      "timestamp": "2026-05-29T13:08:25.888Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:08:26.418Z"
+    },
+    {
+      "id": "1d9a2e89-4b0d-47f0-bf9f-70fef787d2d4",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.11033519553192,
+      "longitude": 57.584399836521776,
+      "magnitude": "2.116",
+      "timestamp": "2026-05-29T13:08:36.067Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:08:36.559Z"
+    },
+    {
+      "id": "fcbaa475-01de-4390-9eda-39fbe7262392",
+      "type": "pothole",
+      "severity": "LOW",
+      "latitude": -20.11033519553192,
+      "longitude": 57.584399836521776,
+      "magnitude": "1.701",
+      "timestamp": "2026-05-29T13:08:39.866Z",
+      "anonymous": true,
+      "reportCount": 1,
+      "createdAt": "2026-05-29T13:08:40.355Z"
     }
   ],
   "reports": [
@@ -127,6 +211,19 @@
       "autoDetected": true,
       "status": "pending",
       "createdAt": "2026-05-29T08:34:06.333Z"
+    },
+    {
+      "id": "00322f57-57b0-4585-9cc3-18627b4f8798",
+      "type": "flood",
+      "severity": "HIGH",
+      "description": "",
+      "latitude": -20.11033519248266,
+      "longitude": 57.58439925714231,
+      "hasPhoto": false,
+      "timestamp": "2026-05-29T13:05:41.529Z",
+      "anonymous": true,
+      "status": "pending",
+      "createdAt": "2026-05-29T13:05:42.029Z"
     }
   ],
   "sos": [
@@ -189,6 +286,16 @@
       "mapsLink": "https://maps.google.com/?q=-20.110336787620035,57.58439992931474",
       "status": "active",
       "createdAt": "2026-05-29T08:54:10.606Z"
+    },
+    {
+      "id": "30ec347d-c613-48a0-a81a-88f57b9c5812",
+      "trigger": "crash_auto",
+      "latitude": -20.110335192507605,
+      "longitude": 57.584399261884094,
+      "timestamp": "2026-05-29T13:07:13.840Z",
+      "mapsLink": "https://maps.google.com/?q=-20.110335192507605,57.584399261884094",
+      "status": "active",
+      "createdAt": "2026-05-29T13:07:14.354Z"
     }
   ],
   "drivers": []
