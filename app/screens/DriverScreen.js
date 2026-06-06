@@ -13,7 +13,7 @@ import config from '../config';
 import { getSpeedLimitForLocation } from '../data/mauritiusData';
 
 const API_URL = config.API_URL;
-const lastSpeedWarnTime = useRef(0);
+
 const HARSH_BRAKE_THRESHOLD = 1.5;
 const HARSH_ACCEL_THRESHOLD = 1.8;
 const SWERVE_THRESHOLD      = 1.6;
@@ -41,20 +41,21 @@ export default function DriverScreen() {
   const [sosActive,    setSosActive]    = useState(false);
   const [sosCountdown, setSosCountdown] = useState(SOS_COUNTDOWN_SECONDS);
 
-  const scoreAnim  = useRef(new Animated.Value(100)).current;
-  const accelSub   = useRef(null);
-  const gyroSub    = useRef(null);
-  const locationSub = useRef(null);
-  const timerRef   = useRef(null);
-  const sosTimerRef = useRef(null);
-  const lastLocation  = useRef(null);
-  const lastBrakeTime = useRef(0);
-  const lastSwerveTime = useRef(0);
-  const lastCrashTime  = useRef(0);
-  const lastPotholeTime = useRef(0);
+  const scoreAnim          = useRef(new Animated.Value(100)).current;
+  const accelSub           = useRef(null);
+  const gyroSub            = useRef(null);
+  const locationSub        = useRef(null);
+  const timerRef           = useRef(null);
+  const sosTimerRef        = useRef(null);
+  const lastLocation       = useRef(null);
+  const lastBrakeTime      = useRef(0);
+  const lastSwerveTime     = useRef(0);
+  const lastCrashTime      = useRef(0);
+  const lastPotholeTime    = useRef(0);
   const lastSosTriggerTime = useRef(0);
-  const locationRef   = useRef(null);   // ← FIXED: now always updated in watch callback
-  const sosActiveRef  = useRef(false);
+  const locationRef        = useRef(null);
+  const sosActiveRef       = useRef(false);
+  const lastSpeedWarnTime  = useRef(0); // ✅ moved inside component
 
   useEffect(() => {
     loadEmergencyContact();
@@ -97,7 +98,7 @@ export default function DriverScreen() {
     locationSub.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, timeInterval: 1000 },
       (loc) => {
-        locationRef.current = loc.coords;  // ← FIXED: was missing before
+        locationRef.current = loc.coords;
         const spd = loc.coords.speed ? Math.max(0, loc.coords.speed * 3.6) : 0;
         setSpeed(Math.round(spd));
         setMaxSpeed(m => Math.max(m, Math.round(spd)));
@@ -108,9 +109,8 @@ export default function DriverScreen() {
         if (spd > zone.limit) {
           setStats(s => ({ ...s, speedingEvents: s.speedingEvents + 1 }));
           deductScore(3, `🚨 Speeding in ${zone.name} (limit: ${zone.limit} km/h)`);
-          // Show warning alert (throttled: max once per 30s)
           const now = Date.now();
-          if (!lastSpeedWarnTime.current || now - lastSpeedWarnTime.current > 30000) {
+          if (now - lastSpeedWarnTime.current > 30000) {
             lastSpeedWarnTime.current = now;
             Alert.alert(
               '⚠️ Speed Warning',
@@ -278,7 +278,6 @@ export default function DriverScreen() {
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
-        {/* SOS Contact Bar */}
         <TouchableOpacity style={styles.contactBar} onPress={() => { setContactInput(emergencyContact); setShowContactSetup(true); }}>
           <Text style={styles.contactBarText}>
             {emergencyContact ? `🆘 SOS: ${emergencyContact}` : '⚠️ Tap to set emergency SOS contact'}
@@ -286,7 +285,6 @@ export default function DriverScreen() {
           <Text style={styles.contactBarEdit}>Edit</Text>
         </TouchableOpacity>
 
-        {/* Score + Speed side by side */}
         <View style={styles.topCards}>
           <View style={[styles.scoreCard, { borderColor: gradeInfo.color }]}>
             <Text style={[styles.scoreNumber, { color: gradeInfo.color }]}>{score}</Text>
@@ -306,7 +304,6 @@ export default function DriverScreen() {
           </View>
         </View>
 
-        {/* Trip Stats */}
         <View style={styles.tripRow}>
           <View style={styles.tripCard}>
             <Text style={styles.tripNum}>{distance.toFixed(1)}</Text>
@@ -322,7 +319,6 @@ export default function DriverScreen() {
           </View>
         </View>
 
-        {/* Control Buttons */}
         <View style={styles.buttonRow}>
           <TouchableOpacity
             style={[styles.trackBtn, isTracking ? styles.trackBtnStop : styles.trackBtnStart]}
@@ -335,7 +331,6 @@ export default function DriverScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Behavior Stats */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>🎯 Driving Behavior</Text>
           <View style={styles.behaviorGrid}>
@@ -347,7 +342,6 @@ export default function DriverScreen() {
           </View>
         </View>
 
-        {/* Sensor bars */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📡 Sensor Activity</Text>
           <SensorBar label="Longitudinal (braking/accel)" value={accelData.y} range={[-3,3]} danger={HARSH_BRAKE_THRESHOLD} />
@@ -355,7 +349,6 @@ export default function DriverScreen() {
           <SensorBar label="Vertical (potholes)"          value={accelData.z} range={[-2,4]} danger={POTHOLE_THRESHOLD + 1} />
         </View>
 
-        {/* Event Log */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📋 Trip Events</Text>
           {events.length === 0
@@ -372,7 +365,6 @@ export default function DriverScreen() {
           }
         </View>
 
-        {/* Tips */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>💡 Mauritius Road Tips</Text>
           {[
@@ -387,7 +379,6 @@ export default function DriverScreen() {
         <View style={{ height: 30 }} />
       </ScrollView>
 
-      {/* SOS Overlay */}
       {sosActive && (
         <View style={styles.sosOverlay}>
           <Text style={styles.sosIcon}>🚨</Text>
@@ -401,7 +392,6 @@ export default function DriverScreen() {
         </View>
       )}
 
-      {/* Contact Modal */}
       <Modal visible={showContactSetup} transparent animationType="slide" onRequestClose={() => { if (emergencyContact) setShowContactSetup(false); }}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.modalOverlay}>
