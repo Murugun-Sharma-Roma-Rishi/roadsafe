@@ -13,7 +13,7 @@ import config from '../config';
 import { getSpeedLimitForLocation } from '../data/mauritiusData';
 
 const API_URL = config.API_URL;
-
+const lastSpeedWarnTime = useRef(0);
 const HARSH_BRAKE_THRESHOLD = 1.5;
 const HARSH_ACCEL_THRESHOLD = 1.8;
 const SWERVE_THRESHOLD      = 1.6;
@@ -108,6 +108,16 @@ export default function DriverScreen() {
         if (spd > zone.limit) {
           setStats(s => ({ ...s, speedingEvents: s.speedingEvents + 1 }));
           deductScore(3, `🚨 Speeding in ${zone.name} (limit: ${zone.limit} km/h)`);
+          // Show warning alert (throttled: max once per 30s)
+          const now = Date.now();
+          if (!lastSpeedWarnTime.current || now - lastSpeedWarnTime.current > 30000) {
+            lastSpeedWarnTime.current = now;
+            Alert.alert(
+              '⚠️ Speed Warning',
+              `Speed limit here is ${zone.limit} km/h.\nYou are doing ${Math.round(spd)} km/h — please slow down.`,
+              [{ text: 'OK' }]
+            );
+          }
         }
 
         if (lastLocation.current) {

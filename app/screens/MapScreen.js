@@ -46,7 +46,6 @@ const HAZARD_FILTERS = [
   { key:'signal',    label:'Signal',    icon:'🚦' },
 ];
 
-// Hazard radius: potholes/debris = pin only; others contextual
 function getHazardRadius(type, severity) {
   if (type === 'pothole' || type === 'debris') return 0;
   if (type === 'accident') return severity === 'HIGH' ? 200 : 100;
@@ -64,8 +63,8 @@ async function fetchOSRMRoute(from, to) {
       const route = data.routes[0];
       return {
         coords:   route.geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng })),
-        distance: (route.distance / 1000).toFixed(1),  // km
-        duration: Math.round(route.duration / 60),      // minutes
+        distance: (route.distance / 1000).toFixed(1),
+        duration: Math.round(route.duration / 60),
         steps:    (route.legs?.[0]?.steps || []).map(s => s.maneuver?.instruction).filter(Boolean),
       };
     }
@@ -73,7 +72,23 @@ async function fetchOSRMRoute(from, to) {
   return null;
 }
 
-// Is a hazard within ~80m of any route segment?
+// FIX 1: Fetch road-snapped geometry for a traffic segment via OSRM
+async function fetchSegmentRoadCoords(seg) {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${seg.startLng},${seg.startLat};${seg.endLng},${seg.endLat}?overview=full&geometries=geojson`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (data.routes?.[0]) {
+      return data.routes[0].geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+    }
+  } catch (e) {}
+  // Fallback to straight line if OSRM unavailable
+  return [
+    { latitude: seg.startLat, longitude: seg.startLng },
+    { latitude: seg.endLat,   longitude: seg.endLng   },
+  ];
+}
+
 function isNearRoute(hazard, routeCoords, bufferDeg = 0.0007) {
   if (!hazard.latitude || !hazard.longitude || routeCoords.length < 2) return false;
   for (let i = 0; i < routeCoords.length - 1; i++) {
@@ -88,6 +103,18 @@ function isNearRoute(hazard, routeCoords, bufferDeg = 0.0007) {
   return false;
 }
 
+// Check if a traffic segment overlaps the active route (within ~500m buffer)
+function segmentOverlapsRoute(seg, routeCoords, bufferDeg = 0.005) {
+  if (!routeCoords || routeCoords.length < 2) return false;
+  const midLat = (seg.startLat + seg.endLat) / 2;
+  const midLng = (seg.startLng + seg.endLng) / 2;
+  for (const pt of routeCoords) {
+    const dist = Math.sqrt((pt.latitude - midLat) ** 2 + (pt.longitude - midLng) ** 2);
+    if (dist < bufferDeg) return true;
+  }
+  return false;
+}
+
 export default function MapScreen() {
   const [location,        setLocation]        = useState(null);
   const [allHazards,      setAllHazards]      = useState(DEMO_HAZARDS);
@@ -95,9 +122,8 @@ export default function MapScreen() {
   const [loading,         setLoading]         = useState(false);
   const mapRef = useRef(null);
 
-  // Layer toggles
+  // Layer toggles — FIX 2: removed showTraffic toggle; traffic now auto-shows with route
   const [showHazards,      setShowHazards]      = useState(true);
-  const [showTraffic,      setShowTraffic]      = useState(false);
   const [showBlackSpots,   setShowBlackSpots]   = useState(false);
   const [showSpeedZones,   setShowSpeedZones]   = useState(false);
   const [showRoutePlanner, setShowRoutePlanner] = useState(false);
@@ -106,19 +132,45 @@ export default function MapScreen() {
   const [stops,          setStops]          = useState([]);
   const [searchText,     setSearchText]     = useState('');
   const [searchResults,  setSearchResults]  = useState([]);
-  const [routeSegments,  setRouteSegments]  = useState([]); // [{coords, distance, duration, steps}]
+  const [routeSegments,  setRouteSegments]  = useState([]);
   const [routeHazards,   setRouteHazards]   = useState(null);
   const [loadingRoute,   setLoadingRoute]   = useState(false);
-  const [selectedStop,   setSelectedStop]   = useState(null); // for turn-by-turn panel
 
-  // Live user speed reporting — updates traffic segments based on current user GPS speed
-  const userSpeedRef   = useRef(null);
+  // FIX 3: Custom start point
+  const [customStart,       setCustomStart]       = useState(null); // null = use GPS location
+  const [startSearchText,   setStartSearchText]   = useState('');
+  const [startSearchResults,setStartSearchResults]= useState([]);
+  const [editingStart,      setEditingStart]       = useState(false);
+
+  // FIX 1: Road-snapped geometry for traffic segments
+  const [trafficRoadCoords, setTrafficRoadCoords] = useState({}); // { segId: [{latitude, longitude}] }
+  const trafficCoordsLoaded = useRef(false);
+
+  // Live user speed — updates traffic segments
   const [liveTraffic,  setLiveTraffic] = useState(TRAFFIC_SEGMENTS);
+
+  // All route coords combined (for traffic overlay)
+  const allRouteCoords = routeSegments.flatMap(s => s.coords);
 
   useEffect(() => {
     getLocation();
     fetchHazards();
+    loadTrafficRoadCoords(); // FIX 1: load road geometry for traffic segments
   }, []);
+
+  // FIX 1: Load OSRM road geometry for all traffic segments
+  const loadTrafficRoadCoords = async () => {
+    if (trafficCoordsLoaded.current) return;
+    trafficCoordsLoaded.current = true;
+    const results = {};
+    // Load in batches to avoid hammering OSRM
+    for (const seg of TRAFFIC_SEGMENTS) {
+      results[seg.id] = await fetchSegmentRoadCoords(seg);
+      // Small delay to be polite to free OSRM server
+      await new Promise(r => setTimeout(r, 100));
+    }
+    setTrafficRoadCoords(results);
+  };
 
   // ─── Location + live traffic update ──────────────────────────────────────
   const getLocation = async () => {
@@ -126,7 +178,6 @@ export default function MapScreen() {
     if (status !== 'granted') return;
     const loc = await Location.getCurrentPositionAsync({});
     setLocation(loc.coords);
-    // Watch and update nearby traffic segment from user's own speed
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, timeInterval: 15000, distanceInterval: 100 },
       (newLoc) => {
@@ -137,7 +188,6 @@ export default function MapScreen() {
     );
   };
 
-  // Update the nearest traffic segment with the user's real GPS speed
   const updateLiveTraffic = (coords, userSpeed) => {
     setLiveTraffic(prev => {
       const updated = [...prev];
@@ -148,10 +198,9 @@ export default function MapScreen() {
         const dist = Math.sqrt((coords.latitude - midLat) ** 2 + (coords.longitude - midLng) ** 2);
         if (dist < minDist) { minDist = dist; nearest = seg; }
       }
-      if (nearest && minDist < 0.05) { // within ~5km
+      if (nearest && minDist < 0.05) {
         const idx = updated.findIndex(s => s.id === nearest.id);
         if (idx >= 0) {
-          // Blend: 70% previous data, 30% current user speed (crowd-blend)
           const blended = Math.round(updated[idx].avgSpeed * 0.7 + userSpeed * 0.3);
           const ratio = blended / updated[idx].freeFlowSpeed;
           const congestion = ratio > 0.75 ? 'free' : ratio > 0.50 ? 'moderate' : ratio > 0.25 ? 'heavy' : 'standstill';
@@ -197,6 +246,31 @@ export default function MapScreen() {
     );
   };
 
+  // FIX 3: Search for custom start point
+  const searchStartPlaces = (text) => {
+    setStartSearchText(text);
+    if (text.length < 2) { setStartSearchResults([]); return; }
+    setStartSearchResults(
+      MAURITIUS_PLACES.filter(p => p.name.toLowerCase().includes(text.toLowerCase())).slice(0, 5)
+    );
+  };
+
+  const selectCustomStart = async (place) => {
+    Keyboard.dismiss();
+    setCustomStart(place);
+    setStartSearchText(place.name);
+    setStartSearchResults([]);
+    setEditingStart(false);
+    if (stops.length > 0) await buildRoutes(stops, place);
+  };
+
+  const resetToGPSStart = async () => {
+    setCustomStart(null);
+    setStartSearchText('');
+    setEditingStart(false);
+    if (stops.length > 0) await buildRoutes(stops, null);
+  };
+
   const addStop = async (place) => {
     Keyboard.dismiss();
     setSearchText('');
@@ -207,13 +281,13 @@ export default function MapScreen() {
       latitude: place.lat, longitude: place.lng,
       latitudeDelta: 0.05, longitudeDelta: 0.05,
     }, 600);
-    await buildRoutes(newStops);
+    await buildRoutes(newStops, customStart);
   };
 
   const removeStop = async (index) => {
     const newStops = stops.filter((_, i) => i !== index);
     setStops(newStops);
-    await buildRoutes(newStops);
+    await buildRoutes(newStops, customStart);
     if (newStops.length === 0) { setRouteHazards(null); setRouteSegments([]); }
   };
 
@@ -222,31 +296,41 @@ export default function MapScreen() {
     const newStops = [...stops];
     [newStops[index - 1], newStops[index]] = [newStops[index], newStops[index - 1]];
     setStops(newStops);
-    await buildRoutes(newStops);
+    await buildRoutes(newStops, customStart);
   };
 
-  const buildRoutes = async (currentStops) => {
+  // FIX 3: buildRoutes now accepts explicit startOverride
+  const buildRoutes = async (currentStops, startOverride = undefined) => {
     if (currentStops.length === 0) { setRouteSegments([]); setRouteHazards(null); return; }
     setLoadingRoute(true);
 
+    const start = startOverride !== undefined ? startOverride : customStart;
+
     const waypoints = [];
-    if (location) waypoints.push({ lat: location.latitude, lng: location.longitude });
+    if (start) {
+      waypoints.push({ lat: start.lat, lng: start.lng });
+    } else if (location) {
+      waypoints.push({ lat: location.latitude, lng: location.longitude });
+    }
     currentStops.forEach(s => waypoints.push({ lat: s.lat, lng: s.lng }));
+
+    if (waypoints.length < 2) { setLoadingRoute(false); return; }
 
     const segments = [];
     const allCoords = [];
 
     for (let i = 0; i < waypoints.length - 1; i++) {
       const result = await fetchOSRMRoute(waypoints[i], waypoints[i + 1]);
+      const fromLabel = i === 0 ? (start ? start.name : 'Your location') : (currentStops[i - 1]?.name || `Stop ${i}`);
       if (result) {
-        segments.push({ ...result, from: i === 0 && location ? 'Your location' : (currentStops[i - 1]?.name || `Stop ${i}`), to: currentStops[i]?.name || `Stop ${i + 1}` });
+        segments.push({ ...result, from: fromLabel, to: currentStops[i]?.name || `Stop ${i + 1}` });
         allCoords.push(...result.coords);
       } else {
         const fallback = [
-          { latitude: waypoints[i].lat,     longitude: waypoints[i].lng },
-          { latitude: waypoints[i+1].lat,   longitude: waypoints[i+1].lng },
+          { latitude: waypoints[i].lat,   longitude: waypoints[i].lng },
+          { latitude: waypoints[i+1].lat, longitude: waypoints[i+1].lng },
         ];
-        segments.push({ coords: fallback, distance: '?', duration: '?', steps: [], from: `Stop ${i}`, to: `Stop ${i+1}` });
+        segments.push({ coords: fallback, distance: '?', duration: '?', steps: [], from: fromLabel, to: `Stop ${i+1}` });
         allCoords.push(...fallback);
       }
     }
@@ -266,7 +350,9 @@ export default function MapScreen() {
 
   const clearRoute = () => {
     setStops([]); setRouteSegments([]); setRouteHazards(null);
-    setSearchText(''); setSearchResults([]); setSelectedStop(null);
+    setSearchText(''); setSearchResults([]);
+    setCustomStart(null); setStartSearchText(''); setStartSearchResults([]);
+    setEditingStart(false);
   };
 
   const totalDistance = routeSegments.reduce((sum, s) => sum + (parseFloat(s.distance) || 0), 0).toFixed(1);
@@ -275,6 +361,11 @@ export default function MapScreen() {
   const routeWarnings = ACCIDENT_BLACK_SPOTS.filter(bs =>
     stops.some(stop => Math.abs(bs.lat - stop.lat) < 0.05 && Math.abs(bs.lng - stop.lng) < 0.05)
   );
+
+  // FIX 2: Traffic segments that overlap the active route (shown automatically)
+  const routeTrafficSegments = allRouteCoords.length > 0
+    ? liveTraffic.filter(seg => segmentOverlapsRoute(seg, allRouteCoords))
+    : [];
 
   return (
     <View style={styles.container}>
@@ -321,21 +412,25 @@ export default function MapScreen() {
           );
         })}
 
-        {/* Traffic — uses liveTraffic (user-speed-blended) */}
-        {showTraffic && liveTraffic.map(seg => {
-          const color  = getTrafficColor(seg.avgSpeed, seg.freeFlowSpeed);
+        {/* FIX 2: Traffic overlay — only shown when a route is active, on road geometry */}
+        {routeTrafficSegments.map(seg => {
+          const color = getTrafficColor(seg.avgSpeed, seg.freeFlowSpeed);
+          // FIX 1: Use road-snapped coords if loaded, else fallback straight line
+          const roadCoords = trafficRoadCoords[seg.id] || [
+            { latitude: seg.startLat, longitude: seg.startLng },
+            { latitude: seg.endLat,   longitude: seg.endLng   },
+          ];
           const midLat = (seg.startLat + seg.endLat) / 2;
           const midLng = (seg.startLng + seg.endLng) / 2;
           return (
             <React.Fragment key={`traffic-${seg.id}`}>
               <Polyline
-                coordinates={[
-                  { latitude: seg.startLat, longitude: seg.startLng },
-                  { latitude: seg.endLat,   longitude: seg.endLng   },
-                ]}
-                strokeColor={color} strokeWidth={7}
+                coordinates={roadCoords}
+                strokeColor={color}
+                strokeWidth={8}
+                zIndex={5}
               />
-              <Marker coordinate={{ latitude: midLat, longitude: midLng }} anchor={{ x: 0.5, y: 0.5 }}>
+              <Marker coordinate={{ latitude: midLat, longitude: midLng }} anchor={{ x: 0.5, y: 0.5 }} zIndex={6}>
                 <View style={[styles.trafficBadge, { backgroundColor: color }]}>
                   <Text style={styles.trafficText}>{seg.avgSpeed}km/h</Text>
                 </View>
@@ -343,7 +438,7 @@ export default function MapScreen() {
                   <Text style={styles.calloutTitle}>🚦 {seg.name}</Text>
                   <Text style={styles.calloutSub}>Now: {seg.avgSpeed} km/h · Limit: {seg.freeFlowSpeed} km/h</Text>
                   <Text style={[styles.calloutSev, { color }]}>{seg.congestion.toUpperCase()}</Text>
-                  <Text style={styles.calloutSub}>⚡ Updated from active users nearby</Text>
+                  <Text style={styles.calloutSub}>⚡ Live from nearby users</Text>
                 </Callout>
               </Marker>
             </React.Fragment>
@@ -374,7 +469,7 @@ export default function MapScreen() {
           </React.Fragment>
         ))}
 
-        {/* Speed zones — pin markers only, no big circles */}
+        {/* Speed zones */}
         {showSpeedZones && SPEED_ZONES.map(zone => {
           const color = zone.type === 'highway' ? '#3498DB' : zone.type === 'main' ? '#F39C12' : '#E74C3C';
           return (
@@ -392,6 +487,19 @@ export default function MapScreen() {
           );
         })}
 
+        {/* FIX 3: Custom start marker */}
+        {customStart && (
+          <Marker coordinate={{ latitude: customStart.lat, longitude: customStart.lng }} anchor={{ x: 0.5, y: 1 }}>
+            <View style={styles.startMarker}>
+              <Text style={styles.startMarkerEmoji}>🟢</Text>
+            </View>
+            <Callout style={styles.callout}>
+              <Text style={styles.calloutTitle}>🟢 Start Point</Text>
+              <Text style={styles.calloutSub}>{customStart.name}</Text>
+            </Callout>
+          </Marker>
+        )}
+
         {/* Stop markers */}
         {stops.map((stop, i) => (
           <Marker key={stop.id} coordinate={{ latitude: stop.lat, longitude: stop.lng }} anchor={{ x: 0.5, y: 0.5 }}>
@@ -406,21 +514,20 @@ export default function MapScreen() {
           </Marker>
         ))}
 
-        {/* Route polylines — each segment a different blue shade */}
+        {/* Route polylines */}
         {routeSegments.map((seg, i) => (
-          <Polyline key={`route-${i}`} coordinates={seg.coords} strokeColor="#3498DB" strokeWidth={5} lineDashPattern={[0]} />
+          <Polyline key={`route-${i}`} coordinates={seg.coords} strokeColor="#3498DB" strokeWidth={5} lineDashPattern={[0]} zIndex={4} />
         ))}
       </MapView>
 
-      {/* ── TOP LAYER BAR ── */}
+      {/* ── TOP LAYER BAR ── FIX 2: removed Traffic toggle */}
       <View style={styles.topBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topBarScroll}>
           {[
             { key: 'hazards',    label: '🕳️ Hazards',    active: showHazards,      style: styles.layerOn,     onPress: () => setShowHazards(!showHazards) },
-            { key: 'traffic',    label: '🚦 Traffic',     active: showTraffic,      style: styles.layerTraffic, onPress: () => setShowTraffic(!showTraffic) },
             { key: 'blackspots', label: '💀 Black Spots', active: showBlackSpots,   style: styles.layerDanger, onPress: () => setShowBlackSpots(!showBlackSpots) },
             { key: 'speed',      label: '⚡ Speed Zones', active: showSpeedZones,   style: styles.layerSpeed,  onPress: () => setShowSpeedZones(!showSpeedZones) },
-            { key: 'route',      label: '🗺️ Route',       active: showRoutePlanner, style: styles.layerRoute,  onPress: () => setShowRoutePlanner(!showRoutePlanner) },
+            { key: 'route',      label: '🗺️ Directions',  active: showRoutePlanner, style: styles.layerRoute,  onPress: () => setShowRoutePlanner(!showRoutePlanner) },
           ].map(btn => (
             <TouchableOpacity key={btn.key} style={[styles.layerBtn, btn.active && btn.style]} onPress={btn.onPress}>
               <Text style={[styles.layerText, btn.active && styles.layerTextOn]}>{btn.label}</Text>
@@ -447,8 +554,8 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── TRAFFIC LEGEND ── */}
-      {showTraffic && !showRoutePlanner && (
+      {/* FIX 2: Traffic legend — only when route is active and has traffic data */}
+      {routeTrafficSegments.length > 0 && (
         <View style={styles.legend}>
           <Text style={styles.legendTitle}>Traffic</Text>
           {[['#2ECC71','Free'],['#F39C12','Moderate'],['#E67E22','Heavy'],['#E74C3C','Standstill']].map(([c, l]) => (
@@ -471,13 +578,14 @@ export default function MapScreen() {
               <View style={styles.routeHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.routeTitle}>
-                    🗺️ Route Planner
+                    🗺️ Directions
                     {loadingRoute && <Text style={styles.routeLoading}> ⏳</Text>}
                   </Text>
                   {stops.length > 0 && !loadingRoute && (
                     <Text style={styles.routeSummary}>
                       📏 {totalDistance} km · ⏱ {totalDuration} min
                       {routeHazards !== null ? ` · ⚠️ ${routeHazards.length} hazards` : ''}
+                      {routeTrafficSegments.length > 0 ? ` · 🚦 ${routeTrafficSegments.length} traffic zones` : ''}
                     </Text>
                   )}
                 </View>
@@ -498,10 +606,55 @@ export default function MapScreen() {
                 </View>
               </View>
 
-              {/* Search input */}
+              {/* FIX 3: Start point picker */}
+              <View style={styles.startRow}>
+                <View style={[styles.stopDot, { backgroundColor: '#2ECC71', marginRight: 8 }]} />
+                {editingStart ? (
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.startInput}
+                      placeholder="Search start location…"
+                      placeholderTextColor="#7f8c8d"
+                      value={startSearchText}
+                      onChangeText={searchStartPlaces}
+                      autoFocus
+                    />
+                    {startSearchResults.length > 0 && (
+                      <View style={styles.searchDropdown}>
+                        {startSearchResults.map((place, i) => (
+                          <TouchableOpacity key={`sr-${i}`}
+                            style={[styles.searchResult, i < startSearchResults.length - 1 && styles.searchResultBorder]}
+                            onPress={() => selectCustomStart(place)}
+                          >
+                            <Text style={styles.searchResultIcon}>📍</Text>
+                            <Text style={styles.searchResultText}>{place.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                    <TouchableOpacity onPress={() => { setEditingStart(false); setStartSearchResults([]); }}>
+                      <Text style={styles.startCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => { setEditingStart(true); setStartSearchText(customStart?.name || ''); }}>
+                    <Text style={styles.startPointText}>
+                      {customStart ? `📍 ${customStart.name}` : '📍 Your current location'}
+                    </Text>
+                    <Text style={styles.startPointHint}>Tap to change start</Text>
+                  </TouchableOpacity>
+                )}
+                {customStart && !editingStart && (
+                  <TouchableOpacity onPress={resetToGPSStart} style={styles.stopBtn}>
+                    <Text style={styles.stopBtnText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Destination search input */}
               <TextInput
                 style={styles.searchInput}
-                placeholder="Add stop — e.g. Grand Baie, Airport, KFC Rose Hill…"
+                placeholder="Add destination — e.g. Grand Baie, Airport…"
                 placeholderTextColor="#7f8c8d"
                 value={searchText}
                 onChangeText={searchPlaces}
@@ -524,19 +677,10 @@ export default function MapScreen() {
                 </View>
               )}
 
-              <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
-                {/* Start */}
-                {location && (
-                  <View style={styles.stopRow}>
-                    <View style={[styles.stopDot, { backgroundColor: '#2ECC71' }]} />
-                    <Text style={styles.stopRowText}>📍 Your location (start)</Text>
-                  </View>
-                )}
-
+              <ScrollView style={{ maxHeight: 180 }} showsVerticalScrollIndicator={false}>
                 {/* Stops with segment info */}
                 {stops.map((stop, i) => (
                   <View key={stop.id}>
-                    {/* Segment summary between this and previous */}
                     {routeSegments[i] && (
                       <View style={styles.segmentInfo}>
                         <Text style={styles.segmentText}>
@@ -564,7 +708,7 @@ export default function MapScreen() {
                 ))}
 
                 {stops.length === 0 && (
-                  <Text style={styles.emptyRoute}>Search a place above to add your first stop</Text>
+                  <Text style={styles.emptyRoute}>Search a destination above to get directions</Text>
                 )}
 
                 {/* Black spot warnings near route */}
@@ -619,7 +763,6 @@ const styles = StyleSheet.create({
   topBarScroll: { paddingHorizontal: 10, gap: 6 },
   layerBtn: { backgroundColor: 'rgba(26,26,46,0.93)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#2d2d4e' },
   layerOn:      { backgroundColor: '#E74C3C', borderColor: '#E74C3C' },
-  layerTraffic: { backgroundColor: '#27AE60', borderColor: '#27AE60' },
   layerDanger:  { backgroundColor: '#C0392B', borderColor: '#C0392B' },
   layerSpeed:   { backgroundColor: '#2980B9', borderColor: '#2980B9' },
   layerRoute:   { backgroundColor: '#8E44AD', borderColor: '#8E44AD' },
@@ -633,7 +776,7 @@ const styles = StyleSheet.create({
   filterText: { color: '#bdc3c7', fontSize: 11, fontWeight: '600' },
   filterTextActive: { color: '#fff' },
 
-  legend: { position: 'absolute', right: 10, top: 106, backgroundColor: 'rgba(13,13,26,0.93)', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#2d2d4e' },
+  legend: { position: 'absolute', right: 10, top: 56, backgroundColor: 'rgba(13,13,26,0.93)', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#2d2d4e' },
   legendTitle: { color: '#ecf0f1', fontSize: 11, fontWeight: '700', marginBottom: 5 },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
@@ -650,6 +793,14 @@ const styles = StyleSheet.create({
   fitBtnText: { color: '#3498DB', fontSize: 12, fontWeight: '600' },
   clearBtn: { backgroundColor: '#E74C3C20', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   clearBtnText: { color: '#E74C3C', fontSize: 12, fontWeight: '600' },
+
+  // FIX 3: start row styles
+  startRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#2d2d4e' },
+  startInput: { backgroundColor: '#1a1a2e', color: '#ecf0f1', borderRadius: 8, padding: 8, fontSize: 13, borderWidth: 1, borderColor: '#2ECC71', marginBottom: 4 },
+  startPointText: { color: '#ecf0f1', fontSize: 13 },
+  startPointHint: { color: '#7f8c8d', fontSize: 10, marginTop: 2 },
+  startCancelText: { color: '#7f8c8d', fontSize: 12, marginTop: 4 },
+
   searchInput: { backgroundColor: '#1a1a2e', color: '#ecf0f1', borderRadius: 10, padding: 11, fontSize: 14, borderWidth: 1, borderColor: '#2d2d4e', marginBottom: 6 },
   searchDropdown: { backgroundColor: '#1a1a2e', borderRadius: 10, borderWidth: 1, borderColor: '#2d2d4e', marginBottom: 8 },
   searchResult: { flexDirection: 'row', alignItems: 'center', padding: 10 },
@@ -689,6 +840,8 @@ const styles = StyleSheet.create({
   speedBadgeUnit: { color: '#ffffffaa', fontSize: 7 },
   stopMarker: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#3498DB', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
   stopMarkerText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  startMarker: { alignItems: 'center' },
+  startMarkerEmoji: { fontSize: 24 },
   callout: { width: 210, padding: 8 },
   calloutTitle: { fontSize: 13, fontWeight: 'bold', color: '#2c3e50', marginBottom: 4 },
   calloutSub: { fontSize: 12, color: '#555', marginBottom: 2 },
